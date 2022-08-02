@@ -6,9 +6,6 @@ import logging
 from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Callable, Dict, NamedTuple, Optional
-from weakref import KeyedRef
-
-from torch import Stream
 
 
 ## TODO: Replace default exceptions with custom exceptions
