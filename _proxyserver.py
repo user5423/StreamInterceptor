@@ -1,39 +1,50 @@
+
+import argparse
+import selectors
 import socket
+import signal
+import logging
+from datetime import datetime
 from dataclasses import dataclass, field
-from typing import Callable, Dict
+from typing import Callable, Dict, NamedTuple
 
-from grpc import server
 
+
+proxyHandlerDescriptor = NamedTuple("ProxyHandlerData", [("PROXY_HOST", str), ("PROXY_PORT", int), ("StreamInterceptor", object)])
 
 
 ## NOTE: We will subclass this for the Stream Interceptor
 @dataclass
 class ProxyInterceptor:
-    clientToProxyBuffer: bytearray = field(init=False, default_factory=bytearray)
-    proxyToServerBuffer: bytearray = field(init=False, default_factory=bytearray)
-    clientToProxyCallback: Callable = field(init=False)
-    proxyToServerCallback: Callable = field(init=False)
+    clientToServerBuffer: bytearray = field(init=False, default_factory=bytearray)
+    ServerToClientBuffer: bytearray = field(init=False, default_factory=bytearray)
+    clientToServerCallback: Callable = field(init=False)
+    serverToClientCallback: Callable = field(init=False)
 
     def __post_init__(self) -> None:
-        self.clientToProxyCallback = self._weakHTTPRequestReroute
-        self.proxyToServerCallback = self._weakHTTPResponseReroute
+        self.clientToServerCallback = self._weakHTTPRequestReroute
+        self.serverToClientCallback = self._weakHTTPResponseReroute
 
 
     # ## NOTE: This needs to rewrite any requests to the real server
-    # def clientToProxyCallback(self, requestChunk: bytes) -> None:
+    # def clientToServerCallback(self, requestChunk: bytes) -> None:
     #      ...
 
     # ## NOTE: This needs to rewrite any responses back to the client
-    # def proxyToServerCallback(self, responseChunk: bytes) -> None:
+    # def serverToClientCallback(self, responseChunk: bytes) -> None:
     #      ...
 
-    ## BUG: This is intended to be a weak request (and will break depending on chunks)
-    def _weakHTTPRequestReroute(self, requestChunk: bytes) -> bytes:
-        return requestChunk.replace(b"0.0.0.0:8080", b"127.0.0.1:80")
+    ## NOTE: This should be performed on a per protocol basis!!!
 
-    ## BUG: This is intended to be a weak request (and will break depending on chunks)
+    ## BUG: This is intended to be a weak request rewrite (and will break depending on chunks)
+    def _weakHTTPRequestReroute(self, requestChunk: bytes) -> None:
+        self.clientToServerBuffer += requestChunk
+        self.clientToServerBuffer.replace(b"0.0.0.0:8080", b"127.0.0.1:80")
+
+    ## BUG: This is intended to be a weak response reroute (and will break depending on chunks)
     def _weakHTTPResponseReroute(self, requestChunk: bytes) -> bytes:
-        return requestChunk.replace(b"127.0.0.1:80", b"0.0.0.0:8080")
+        self.ServerToClientBuffer += requestChunk
+        self.ServerToClientBuffer.replace(b"0.0.0.0:8080", b"127.0.0.1:80")
 
 
 
