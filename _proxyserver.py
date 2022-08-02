@@ -98,10 +98,6 @@ class ProxyTunnel:
         else:
             raise Exception("The socket provided is not associated with this tunnel")
 
-    def close(self) -> None:
-        self.clientToProxySocket.close()
-        self.proxyToServerSocket.close()
-
 
     def read(self, source: socket.socket) -> Optional[int]:
         ## Check if the source socket is associated with the tunnel
@@ -147,39 +143,72 @@ class ProxyTunnel:
 
 @dataclass
 class ProxyConnections:
-    _fd: Dict[str, ProxyTunnel] = field(default_factory=dict)
+    PROXY_HOST: str = field(init=True)
+    PROXY_PORT: int = field(init=True)
+
+    _fd: Dict[str, ProxyTunnel] = field(init=False, default_factory=dict)
+    selector: selectors.BaseSelector = field(init=False)
+
 
     def get(self, fd: int) -> ProxyTunnel:
         return self._fd.get(fd)
 
+
     def put(self, fd: int, proxyTunnel: ProxyTunnel) -> None:
         self._fd[fd] = proxyTunnel
 
+
     def len(self) -> int:
         return len(self._fd)
+
 
     def getDestination(self, fd: int) -> None:
         return self._fd.get(fd).getDestination(fd)
 
 
     ## TODO: We need to add methods for rewriting
-    def createTunnel(self, clientToProxySocket: socket.socket, proxyToServerSocket: socket.socket):
+    def createTunnel(self, clientToProxySocket: socket.socket, proxyToServerSocket: socket.socket) -> ProxyTunnel:
         ## Check if the sockets are registered with a pre-existing tunnel
         if self._fd.get(clientToProxySocket):
             raise Exception("The `clientToProxySocket` is already registered with a tunnel")
         elif self._fd.get(proxyToServerSocket):
             raise Exception("The `proxyToServerSocket` is already registered with a tunnel")
 
-        ## We then create a new proxy and register it
+        ## We then create a new proxyTunnel
         proxyTunnel = ProxyTunnel(clientToProxySocket, proxyToServerSocket)
         self.put(clientToProxySocket.fileno(), proxyTunnel)
         self.put(proxyToServerSocket.fileno(), proxyTunnel)
 
+        ## We then register the associated sockets (so that they can be polled)
+        self.selector.register(clientToProxySocket, selectors.EVENT_READ | selectors.EVENT_WRITE, data="connection")
+        self.selector.register(proxyToServerSocket, selectors.EVENT_READ | selectors.EVENT_WRITE, data="connection")
+        
+        return proxyTunnel
+
 
     def closeTunnel(self, proxyTunnel: ProxyTunnel) -> None:
         proxyTunnel = self._fd[proxyTunnel.clientToProxySocket]
-        proxyTunnel.close()
+        
+        ## Close and unregister the clientToProxySocket
+        proxyTunnel.clientToProxySocket.close()
+        self.selector.unregister(proxyTunnel.clientToProxySocket)
         del self._fd[proxyTunnel.clientToProxySocket]
+
+        ## Close and unregister the proxyToServerSocket
+        proxyTunnel.proxyToServerSocket.close()
+        self.selector.unregister(proxyTunnel.proxyToServerSocket)
+        del self._fd[proxyTunnel.proxyToServerSocket]
+
+
+    def closeAllTunnels(self) -> None:
+        proxyTunnels = {tunnel for tunnel in self._fd.values}
+        for tunnel in proxyTunnels:
+            self.closeTunnel(tunnel)
+
+
+    def setupProxyToServerSocket(self) -> socket.socket:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.connect((self.PROXY_HOST, self.PROXY_PORT))
 
 
 def main():
