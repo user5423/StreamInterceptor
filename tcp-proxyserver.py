@@ -175,10 +175,6 @@ class ProxyConnections:
         return len(self._sock)
 
 
-    def getDestination(self, sock: int) -> None:
-        return self._sock.get(sock).getDestination(fd)
-
-
     ## TODO: We need to add methods for rewriting
     def createTunnel(self, clientToProxySocket: socket.socket, proxyToServerSocket: socket.socket) -> ProxyTunnel:
         ## Check if the sockets are registered with a pre-existing tunnel
