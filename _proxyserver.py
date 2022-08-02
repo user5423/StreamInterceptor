@@ -12,6 +12,15 @@ from weakref import KeyedRef
 proxyHandlerDescriptor = NamedTuple("ProxyHandlerData", [("PROXY_HOST", str), ("PROXY_PORT", int), ("StreamInterceptor", object)])
 
 
+## TODO: Define how ProxyInterceptor subclasses will interact with the proxy
+## TODO: Replace default exceptions with custom exceptions
+## TODO: Implement Context management for TCPProxyServer
+## TODO: Evaluate and implement additional exception handling
+
+## TODO: Write functional code tests
+## TODO: Benchmark server and evaluate performance bottlenecks
+
+
 ## NOTE: We will subclass this for the Stream Interceptor
 @dataclass
 class ProxyInterceptor:
