@@ -9,25 +9,31 @@ from grpc import server
 ## NOTE: We will subclass this for the Stream Interceptor
 @dataclass
 class ProxyInterceptor:
-    clientToServerBuffer: bytearray = field(init=False, default=bytearray)
+    clientToProxyBuffer: bytearray = field(init=False, default_factory=bytearray)
     proxyToServerBuffer: bytearray = field(init=False, default_factory=bytearray)
+    clientToProxyCallback: Callable = field(init=False)
+    proxyToServerCallback: Callable = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.clientToProxyCallback = self._weakHTTPRequestReroute
+        self.proxyToServerCallback = self._weakHTTPResponseReroute
 
 
-    ## NOTE: This needs to rewrite any requests to the real server
-    def clientToProxyCallback(self, requestChunk: bytes) -> None:
-         ...
+    # ## NOTE: This needs to rewrite any requests to the real server
+    # def clientToProxyCallback(self, requestChunk: bytes) -> None:
+    #      ...
 
-    ## NOTE: This needs to rewrite any responses back to the client
-    def proxyToServerCallback(self, responseChunk: bytes) -> None:
-         ...
+    # ## NOTE: This needs to rewrite any responses back to the client
+    # def proxyToServerCallback(self, responseChunk: bytes) -> None:
+    #      ...
 
     ## BUG: This is intended to be a weak request (and will break depending on chunks)
     def _weakHTTPRequestReroute(self, requestChunk: bytes) -> bytes:
-        ...
+        return requestChunk.replace(b"0.0.0.0:8080", b"127.0.0.1:80")
 
     ## BUG: This is intended to be a weak request (and will break depending on chunks)
     def _weakHTTPResponseReroute(self, requestChunk: bytes) -> bytes:
-        ...
+        return requestChunk.replace(b"127.0.0.1:80", b"0.0.0.0:8080")
 
 
 
