@@ -45,6 +45,38 @@ class ProxyInterceptor:
         self.serverToClientCallback.replace(b"0.0.0.0:8080", b"127.0.0.1:80")
 
 
+@dataclass
+class Buffer:
+    _data: bytearray = field(init=False, default=bytearray)
+
+
+    def read(self, bytes: int = 0) -> bytes:
+        if bytes <= 0:
+            return self._data
+        return self._data[max(len(self._data) - bytes, 0):]
+
+
+    def pop(self, bytes: int = 0) -> bytes:
+        if bytes <= 0:
+            self._data = bytearray()
+        self._data = self._data[:min(len(self._data) - bytes, 0)]
+
+
+    def write(self, chunk: bytearray) -> None:
+        self.execWriteHook(chunk)
+        self._data += chunk
+
+
+    def execWriteHook(self, chunk: bytearray) -> None:
+        return self._writeHook(chunk, self)
+
+
+    def setHook(self, hook: Callable[[bytearray, "Buffer"], None]) -> None:
+        self._writeHook = hook
+        
+
+    def _writeHook(chunk: bytearray, buffer: "Buffer") -> None:
+        ...
 
 
 @dataclass
