@@ -8,11 +8,9 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, NamedTuple, Optional
 from weakref import KeyedRef
 
+from torch import Stream
 
-proxyHandlerDescriptor = NamedTuple("ProxyHandlerData", [("PROXY_HOST", str), ("PROXY_PORT", int), ("StreamInterceptor", object)])
 
-
-## TODO: Define how ProxyInterceptor subclasses will interact with the proxy
 ## TODO: Replace default exceptions with custom exceptions
 ## TODO: Implement Context management for TCPProxyServer
 ## TODO: Evaluate and implement additional exception handling
@@ -21,39 +19,32 @@ proxyHandlerDescriptor = NamedTuple("ProxyHandlerData", [("PROXY_HOST", str), ("
 ## TODO: Benchmark server and evaluate performance bottlenecks
 
 
+
+proxyHandlerDescriptor = NamedTuple("ProxyHandlerData", [("PROXY_HOST", str), ("PROXY_PORT", int), ("StreamInterceptor", object)])
+
+
+## TODO: Use ABCs to create abstract class
 ## NOTE: We will subclass this for the Stream Interceptor
-@dataclass
+## NOTE: This should be performed on a per protocol basis!!!
 class ProxyInterceptor:
-    ...
-#     clientToServerBuffer: bytearray = field(init=False, default_factory=bytearray)
-#     serverToClientCallback: bytearray = field(init=False, default_factory=bytearray)
-#     clientToServerCallback: Callable = field(init=False)
-#     serverToClientCallback: Callable = field(init=False)
+    ## NOTE: This needs to rewrite any requests to the real server
+    def clientToServerHook(self, requestChunk: bytes, buffer: "Buffer") -> None:
+         ...
 
-#     def __post_init__(self) -> None:
-#         self.clientToServerCallback = self._weakHTTPRequestReroute
-#         self.serverToClientCallback = self._weakHTTPResponseReroute
+    ## NOTE: This needs to rewrite any responses back to the client
+    def serverToClientHook(self, responseChunk: bytes, buffer: "Buffer") -> None:
+         ...
 
 
-#     # ## NOTE: This needs to rewrite any requests to the real server
-#     # def clientToServerCallback(self, requestChunk: bytes) -> None:
-#     #      ...
+## NOTE: This is not intended to work robustly - this is just a code that is meant to show an example
+class HTTPProxyInterceptor(ProxyInterceptor):
+    def clientToServerHook(self, requestChunk: bytes, buffer: "Buffer") -> None:
+        buffer._data = buffer._data.replace(b"0.0.0.0:8080", b"127.0.0.1:80")
 
-#     # ## NOTE: This needs to rewrite any responses back to the client
-#     # def serverToClientCallback(self, responseChunk: bytes) -> None:
-#     #      ...
+    def serverToClientHook(self, requestChunk: bytes, buffer: "Buffer") -> bytes:
+        buffer._data = buffer._data.replace(b"127.0.0.1:80", b"0.0.0.0:8080")
 
-#     ## NOTE: This should be performed on a per protocol basis!!!
 
-#     ## BUG: This is intended to be a weak request rewrite (and will break depending on chunks)
-#     def _weakHTTPRequestReroute(self, requestChunk: bytes) -> None:
-#         self.clientToServerBuffer += requestChunk
-#         self.clientToServerBuffer.replace(b"0.0.0.0:8080", b"127.0.0.1:80")
-
-#     ## BUG: This is intended to be a weak response reroute (and will break depending on chunks)
-#     def _weakHTTPResponseReroute(self, requestChunk: bytes) -> bytes:
-#         self.serverToClientCallback += requestChunk
-#         self.serverToClientCallback.replace(b"0.0.0.0:8080", b"127.0.0.1:80")
 
 
 @dataclass
@@ -86,21 +77,24 @@ class Buffer:
         self._writeHook = hook
         
 
-    @staticmethod
     def _writeHook(chunk: bytearray, buffer: "Buffer") -> None:
-        buffer._data = buffer._data.replace(b"0.0.0.0:8080", b"127.0.0.1:80")
-
+        ## NOTE: This method should be overriden by the Buffer.setHook method
+        raise NotImplementedError
 
 @dataclass
 class ProxyTunnel:
     clientToProxySocket: socket.socket
     proxyToServerSocket: socket.socket
+    streamInterceptor: ProxyInterceptor
     CHUNK_SIZE: int = field(default=1024)
 
     clientToServerBuffer: Buffer = field(init=False, default_factory=Buffer)
     serverToClientBuffer: Buffer = field(init=False, default_factory=Buffer)
 
-    proxyInterceptor: ProxyInterceptor = field(init=False, repr=False, default_factory=ProxyInterceptor)
+    def __post_init__(self):
+        self.streamInterceptor = self.streamInterceptor()
+        self.clientToServerBuffer.setHook(self.streamInterceptor.clientToServerHook)
+        self.serverToClientBuffer.setHook(self.streamInterceptor.serverToClientHook)
 
     def getDestination(self, source: socket.socket) -> socket.socket:
         if self.clientToProxySocket == source:
@@ -166,6 +160,7 @@ class ProxyTunnel:
 class ProxyConnections:
     PROXY_HOST: str = field(init=True)
     PROXY_PORT: int = field(init=True)
+    StreamInterceptor: ProxyInterceptor = field(init=True)
 
     _sock: Dict[socket.socket, ProxyTunnel] = field(init=False, default_factory=dict)
     selector: selectors.BaseSelector = field(init=False)
@@ -196,7 +191,7 @@ class ProxyConnections:
             raise Exception("The `proxyToServerSocket` is already registered with a tunnel")
 
         ## We then create a new proxyTunnel
-        proxyTunnel = ProxyTunnel(clientToProxySocket, proxyToServerSocket)
+        proxyTunnel = ProxyTunnel(clientToProxySocket, proxyToServerSocket, self.StreamInterceptor)
         self.put(clientToProxySocket, proxyTunnel)
         self.put(proxyToServerSocket, proxyTunnel)
 
@@ -247,7 +242,7 @@ class TCPProxyServer:
     PORT: int
     PROXY_HOST: str
     PROXY_PORT: int
-    StreamInterceptor: object
+    StreamInterceptor: ProxyInterceptor
 
     serverSocket: socket.socket = field(init=False, default=None)
     selector: selectors.BaseSelector = field(init=False)
@@ -263,7 +258,7 @@ class TCPProxyServer:
     def _setupDataStructures(self):
         ## TODO: Add argument for StreamInterception for ProxyConnections construction
         self.proxyHandlerDescriptor = proxyHandlerDescriptor(self.PROXY_HOST, self.PROXY_PORT, self.StreamInterceptor)
-        self.proxyConnections = ProxyConnections(self.PROXY_HOST, self.PROXY_PORT)
+        self.proxyConnections = ProxyConnections(self.PROXY_HOST, self.PROXY_PORT, self.StreamInterceptor)
 
 
     def _setupSignalHandlers(self):
@@ -386,7 +381,7 @@ def main():
     PORT = 8080
     PROXY_HOST = "127.0.0.1"
     PROXY_PORT = 80
-    StreamInterceptor = None
+    StreamInterceptor = HTTPProxyInterceptor
     tcp = TCPProxyServer(HOST, PORT, PROXY_HOST, PROXY_PORT, StreamInterceptor)
     tcp.run()
 
