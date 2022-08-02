@@ -1,13 +1,11 @@
 
-import argparse
 import selectors
 import socket
 import signal
 import logging
 from datetime import datetime
 from dataclasses import dataclass, field
-from typing import Callable, Dict, NamedTuple
-
+from typing import Callable, Dict, NamedTuple, Optional
 
 
 proxyHandlerDescriptor = NamedTuple("ProxyHandlerData", [("PROXY_HOST", str), ("PROXY_PORT", int), ("StreamInterceptor", object)])
@@ -17,7 +15,7 @@ proxyHandlerDescriptor = NamedTuple("ProxyHandlerData", [("PROXY_HOST", str), ("
 @dataclass
 class ProxyInterceptor:
     clientToServerBuffer: bytearray = field(init=False, default_factory=bytearray)
-    ServerToClientBuffer: bytearray = field(init=False, default_factory=bytearray)
+    serverToClientCallback: bytearray = field(init=False, default_factory=bytearray)
     clientToServerCallback: Callable = field(init=False)
     serverToClientCallback: Callable = field(init=False)
 
@@ -43,8 +41,9 @@ class ProxyInterceptor:
 
     ## BUG: This is intended to be a weak response reroute (and will break depending on chunks)
     def _weakHTTPResponseReroute(self, requestChunk: bytes) -> bytes:
-        self.ServerToClientBuffer += requestChunk
-        self.ServerToClientBuffer.replace(b"0.0.0.0:8080", b"127.0.0.1:80")
+        self.serverToClientCallback += requestChunk
+        self.serverToClientCallback.replace(b"0.0.0.0:8080", b"127.0.0.1:80")
+
 
 
 
@@ -52,6 +51,11 @@ class ProxyInterceptor:
 class ProxyTunnel:
     clientToProxySocket: socket.socket
     proxyToServerSocket: socket.socket
+    CHUNK_SIZE: int = field(default=1024)
+
+    clientToServerBuffer: bytearray = field(init=False, default_factory=bytearray)
+    serverToClientBuffer: bytearray = field(init=False, default_factory=bytearray)
+
     proxyInterceptor: ProxyInterceptor = field(init=False, repr=False, default_factory=ProxyInterceptor)
 
     def getDestination(self, fd: int) -> socket.socket:
@@ -65,6 +69,48 @@ class ProxyTunnel:
     def close(self) -> None:
         self.clientToProxySocket.close()
         self.proxyToServerSocket.close()
+
+
+    def read(self, source: socket.socket) -> Optional[int]:
+        ## Check if the source socket is associated with the tunnel
+        fd = source.fileno()
+        if not (self.clientToProxySocket.fileno() == fd or self.proxyToServerSocket.fileno() == fd):
+            raise Exception("The socket provided is not associated with this tunnel")
+
+        ## Read the source 
+        data = source.recv(1024)
+        if not data:
+            return None
+        
+        ## Read it into the buffer
+        buffer = self._selectBuffer(source)
+        buffer.write(data)
+        return len(data)
+
+
+    def write(self, destination: socket.socket) -> Optional[int]:
+        ## Check if the source socket is associated with the tunnel
+        fd = destination.fileno()
+        if not (self.clientToProxySocket.fileno() == fd or self.proxyToServerSocket.fileno() == fd):
+            raise Exception("The socket provided is not associated with this tunnel")
+
+        ## Read from the buffer and send it to destination socket
+        buffer = self._selectBuffer(destination)
+        data = buffer.read(self.CHUNK_SIZE)
+        
+        bytesSent = destination.send(data, self.CHUNK_SIZE)
+        buffer.pop(bytesSent)
+        return bytesSent
+        
+
+    def _selectBuffer(self, source: socket.socket) -> bytes:
+        fd = source.fileno()
+        if self.clientToProxySocket.fileno() == fd:
+            return self.proxyInterceptor.clientToServerBuffer
+        elif self.proxyToServerSocket.fileno() == fd:
+            return self.proxyInterceptor.serverToClientBuffer
+        else:
+            raise Exception("The socket provided is not associated with this tunnel")
 
 
 @dataclass
@@ -98,10 +144,10 @@ class ProxyConnections:
         self.put(proxyToServerSocket.fileno(), proxyTunnel)
 
 
-    def deleteTunnel(self, proxyTunnel: ProxyTunnel) -> None:
+    def closeTunnel(self, proxyTunnel: ProxyTunnel) -> None:
+        proxyTunnel = self._fd[proxyTunnel.clientToProxySocket]
+        proxyTunnel.close()
         del self._fd[proxyTunnel.clientToProxySocket]
-
-
 
 
 def main():
