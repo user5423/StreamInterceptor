@@ -370,13 +370,11 @@ class TCPProxyServer:
 
 
 def main():
-    HOST = "0.0.0.0"
-    PORT = 8080
-    PROXY_HOST = "127.0.0.1"
-    PROXY_PORT = 80
+    HOST, PORT = "0.0.0.0", 8080
+    PROXY_HOST, PROXY_PORT = "127.0.0.1", 80
     StreamInterceptor = HTTPProxyInterceptor
-    tcp = TCPProxyServer(HOST, PORT, PROXY_HOST, PROXY_PORT, StreamInterceptor)
-    tcp.run()
+    TPS = TCPProxyServer(HOST, PORT, PROXY_HOST, PROXY_PORT, StreamInterceptor)
+    TPS.run()
 
 
 if __name__ == "__main__":
