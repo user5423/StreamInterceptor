@@ -5,9 +5,9 @@ import signal
 import logging
 from datetime import datetime
 from dataclasses import dataclass, field
-from typing import Callable, Dict, NamedTuple, Optional
+from typing import Dict, Optional
 
-
+from _proxyDS import Buffer, proxyHandlerDescriptor, ProxyInterceptor
 ## TODO: Replace default exceptions with custom exceptions
 ## TODO: Implement Context management for TCPProxyServer
 ## TODO: Evaluate and implement additional exception handling
@@ -17,66 +17,6 @@ from typing import Callable, Dict, NamedTuple, Optional
 
 
 
-proxyHandlerDescriptor = NamedTuple("ProxyHandlerData", [("PROXY_HOST", str), ("PROXY_PORT", int), ("StreamInterceptor", object)])
-
-
-## TODO: Use ABCs to create abstract class
-## NOTE: We will subclass this for the Stream Interceptor
-## NOTE: This should be performed on a per protocol basis!!!
-class ProxyInterceptor:
-    ## NOTE: This needs to rewrite any requests to the real server
-    def clientToServerHook(self, requestChunk: bytes, buffer: "Buffer") -> None:
-         ...
-
-    ## NOTE: This needs to rewrite any responses back to the client
-    def serverToClientHook(self, responseChunk: bytes, buffer: "Buffer") -> None:
-         ...
-
-
-## NOTE: This is not intended to work robustly - this is just a code that is meant to show an example
-class HTTPProxyInterceptor(ProxyInterceptor):
-    def clientToServerHook(self, requestChunk: bytes, buffer: "Buffer") -> None:
-        buffer._data = buffer._data.replace(b"0.0.0.0:8080", b"127.0.0.1:80")
-
-    def serverToClientHook(self, requestChunk: bytes, buffer: "Buffer") -> bytes:
-        buffer._data = buffer._data.replace(b"127.0.0.1:80", b"0.0.0.0:8080")
-
-
-
-
-@dataclass
-class Buffer:
-    _data: bytearray = field(init=False, default_factory=bytearray)
-
-
-    def read(self, bytes: int = 0) -> bytes:
-        if bytes <= 0:
-            return self._data
-        return self._data[max(len(self._data) - bytes, 0):]
-
-
-    def pop(self, bytes: int = 0) -> bytes:
-        if bytes <= 0:
-            self._data = bytearray()
-        self._data = self._data[:min(len(self._data) - bytes, 0)]
-
-
-    def write(self, chunk: bytearray) -> None:
-        self._data += chunk
-        self.execWriteHook(chunk)
-
-
-    def execWriteHook(self, chunk: bytearray) -> None:
-        return self._writeHook(chunk, self)
-
-
-    def setHook(self, hook: Callable[[bytearray, "Buffer"], None]) -> None:
-        self._writeHook = hook
-        
-
-    def _writeHook(chunk: bytearray, buffer: "Buffer") -> None:
-        ## NOTE: This method should be overriden by the Buffer.setHook method
-        raise NotImplementedError
 
 @dataclass
 class ProxyTunnel:
