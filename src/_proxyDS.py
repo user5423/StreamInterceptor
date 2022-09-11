@@ -50,3 +50,12 @@ class Buffer:
     def _writeHook(chunk: bytearray, buffer: "Buffer") -> None:
         ## NOTE: This method should be overriden by the Buffer.setHook method
         raise NotImplementedError
+
+## NOTE: I recommend subclassing the "Buffer" class for each protocol supported
+##      - HTTPBuffer
+##      - FTPBuffer
+##      - ...
+## Each protocol has its own request AND response structure
+##      - typically there is a delimiter that seperates one request from the following (and the same for responses)
+##          - In HTTP, this delimiter is "\r\n\r\n"
+##          - In FTP, this delimiter is \015\012, (although I think this swaps around for responses)
