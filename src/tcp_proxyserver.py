@@ -75,7 +75,7 @@ class ProxyTunnel:
             return None
             
 
-    def _selectBufferToWrite(self, source: socket.socket) -> bytes:
+    def _selectBufferToWrite(self, source: socket.socket) -> Buffer:
         if self.clientToProxySocket == source:
             return self.clientToServerBuffer
         elif self.proxyToServerSocket == source:
@@ -84,7 +84,7 @@ class ProxyTunnel:
             raise Exception("The socket provided is not associated with this tunnel")
 
 
-    def _selectBufferToRead(self, source: socket.socket) -> bytes:
+    def _selectBufferToRead(self, source: socket.socket) -> Buffer:
         if self.clientToProxySocket == source:
             return self.serverToClientBuffer
         elif self.proxyToServerSocket == source:
