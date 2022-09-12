@@ -25,13 +25,13 @@ class ProxyInterceptor:
 
 
 @dataclass
-class RequestBuffer:
+class Buffer:
+    REQUEST_DELIMITERS: List[str] = field(init=True)
     _data: bytearray = field(init=False, default_factory=bytearray)
     _requests: deque = field(init=False, default_factory=deque)
 
     CR: str = "\r"
     LF: str = "\n"
-    REQUEST_DELIMITERS = [] ## This needs to be overriden by a subclass
 
     def __post_init__(self):
         ## NOTE: We'll likely change the structure later
@@ -164,4 +164,6 @@ class RequestBuffer:
 
     ##################### Request Hook ###################
     def _requestHook(self, request: bytearray) -> None:
+        raise NotImplementedError
+        
         ...
