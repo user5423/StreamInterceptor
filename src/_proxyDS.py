@@ -101,3 +101,67 @@ class RequestBuffer:
             raise IndexError("Cannot peak a request from empty buffer._requests deque")
         
         return self._requests[-1]
+
+
+    ################## Write Hook  ######################
+    def _writeHook(self, chunk: bytearray) -> None:
+        """This is a hook that should execute whenever a new chunk has been received"""
+
+        ## NOTE: In here, we are able to split up the streams/chunks into requests
+
+        ## If a delimeter is greater than size 1, then it is possible that it is spread over
+        ## multiple chunks (so we need to check this by adding bytes from previous chunks)
+        offset = 0
+        if self.MAX_DELIMETER_LENGTH > 1:
+            chunk = self._data[-(self.MAX_DELIMETER_LENGTH+1):] + self._data
+            offset = self.MAX_DELIMETER_LENGTH-1
+
+        ## NOTE: Great potential for optimization here
+        ## --> This only works if the list of strings are ordred
+        ## --> e.g. if an expression is encapsulating, then `\r\n` must come before `\r`
+        ## BUG: There are unexplored cases that the below search would likely fail
+        ## --> e.g. overlapping strings potentially:??
+        ## TODO: Re-evaluate the search mechanism for correctness
+        delimiters = [m.end() for m in re.finditer(self.REQUEST_DELIMETER_REGEX, chunk)]
+        
+        ## If multiple delimeters were found in the chunk, then
+        ## -- only the first request can be over multiple chunks
+        ## -- the rest that have delimeters are not spread over multiple chunks
+        ## -- the final piece of the chunk that has no delimeter can be spread over
+        ##      --> this will be case 1 when the next chunk is recv()
+
+        ## NOTE: It is important to take care of the index pointers
+        ## -- as we pop from the buffer to send it to the target destination
+        ## --> We need to readjust the pointer
+        leftIndex = 0
+        for index in delimiters:
+            ## we have the offset stored that we subtract
+            rightIndex = (index - offset)
+            ## we store the substring into the queue
+            self.pushToQueue(chunk[leftIndex:rightIndex+1], True)
+            ## we update the leftIndex
+            leftIndex = rightIndex + 1
+
+        ## If there is any remaining piece of the chunk that isn't delimited
+        if (len(chunk) - leftIndex) > 1:
+            self.pushToQueue(chunk[leftIndex:], False)
+
+        ## At this point we must have SOMETHING in the queue
+        ## All elements below the top have been delimited, so we can pass it to the requestHook
+        while len(self._requests) - 1:
+            request, _ = self._requests.pop()
+            self._requestHook(request)
+
+        ## The top element isn't guaranteed to be finished
+        ## --> Therefore we need to determine if it has been delimited
+        _, isDelimited = self.peakFromQueue()
+        if isDelimited:
+            self.peakFromQueue()
+            self._requestHook(request)
+
+        return None
+
+
+    ##################### Request Hook ###################
+    def _requestHook(self, request: bytearray) -> None:
+        ...
