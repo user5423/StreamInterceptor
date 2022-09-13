@@ -1,6 +1,6 @@
 
 import logging
-from typing import Optional
+from typing import Optional, Tuple
 from _proxyDS import ProxyInterceptor, Buffer
 import collections
 
@@ -101,15 +101,15 @@ class FTPProxyInterceptor(ProxyInterceptor):
         
         while True:
             ## Define variables
-            USER = None
+            username = None
             USERrequest = None
             USERresponse = None
             
-            PASS = None
+            password = None
             PASSrequest = None
             PASSresponse = None
             
-            ACCT = None
+            account = None
             ACCTrequest = None
             ACCTresponse = None
 
@@ -122,20 +122,16 @@ class FTPProxyInterceptor(ProxyInterceptor):
                 responseCode = self.getResponseCode(response)
                 if 100 <= responseCode <= 199:
                     ## Error
-                    logging.error("""ERROR @ftp.cmds.USER - \t
-                                  1) USER-request: <%s>, USER-response: <%s>""",
-                                  USERrequest, USERresponse)
+                    self._createFTPLoginErrorMessage("ERROR", "USER", (USERrequest, USERresponse))
                     continue
                 elif 200 <= responseCode <= 299:
                     ## Success
                     ## NOTE: You should not be able to login with just USER command
-                    logging.info("SUCCESS @ftp.cmds.USER - Username: <%s>", USER)
+                    self._createFTPLoginSuccessMessage(username)
                     continue
                 elif 400 <= responseCode <= 599:
                     ## Failure
-                    logging.info("""FAILURE @ftp.cmds.USER - \t
-                                  1) USER-request: <%s>, USER-response: <%s>""",
-                                  USERrequest, USERresponse)
+                    self._createFTPLoginErrorMessage("FAILURE", "USER", (USERrequest, USERresponse))
                     continue
                     
                 ## otherwise we got 3yz reply, so we continue
@@ -149,21 +145,15 @@ class FTPProxyInterceptor(ProxyInterceptor):
                 responseCode = self.getResponseCode(response)
                 if 100 <= responseCode <= 199:
                     ## Error
-                    logging.error("""ERROR @ftp.cmds.PASS - \t
-                                  1) USER-request: <%s>, USER-response: <%s>, \t
-                                  2) PASS-request: <%s>, PASS-response: <%s>""", 
-                                  USERrequest, USERresponse, PASSrequest, PASSresponse)
+                    self._createFTPLoginErrorMessage("ERROR", "PASS", (USERrequest, USERresponse), (PASSrequest, PASSresponse))
                     continue
                 elif 200 <= responseCode <= 299:
                     ## Success
-                    logging.info("SUCCESS @ftp.cmds.PASS - Username: <%s>, PASSWORD: <%s>", USER, PASS)
+                    self._createFTPLoginSuccessMessage(username, password)
                     continue
                 elif 400 <= responseCode <= 599:
                     ## Failure
-                    logging.info("""FAILURE @ftp.cmds.PASS - \t
-                                  1) USER-request: <%s>, USER-response: <%s>, \t
-                                  2) PASS-request: <%s>, PASS-response: <%s>""", 
-                                  USERrequest, USERresponse, PASSrequest, PASSresponse)
+                    self._createFTPLoginErrorMessage("FAILURE", "PASS", (USERrequest, USERresponse), (PASSrequest, PASSresponse))
                     continue
                     
                 ## otherwise we got 3yz reply, so we continue
@@ -177,30 +167,70 @@ class FTPProxyInterceptor(ProxyInterceptor):
                 responseCode = self.getResponseCode(response)
                 if 100 <= responseCode <= 199 or 300 <= responseCode <= 399:
                     ## Error
-                    logging.error("""ERROR @ftp.cmds.ACCT - \t
-                        1) USER-request: <%s>, USER-response: <%s>, \t
-                        2) PASS-request: <%s>, PASS-response: <%s>, \t
-                        3) ACCT-request: <%s>, ACCT-response: <%s>""", 
-                        USERrequest, USERresponse, PASSrequest, PASSresponse, ACCTrequest,  ACCTresponse)
+                    self._createFTPLoginErrorMessage("ERROR", "ACCT", (USERrequest, USERresponse), (PASSrequest, PASSresponse), (ACCTrequest, ACCTresponse))
                     continue
                 elif 200 <= responseCode <= 299:
                     ## Success
-                    logging.info("SUCCESS @ftp.cmds.PASS - Username: <%s>, PASSWORD: <%s>, ACCT: <%s>", USER, PASS, ACCT)
+                    self._createFTPLoginSuccessMessage(username, password, account)
                     continue
                 elif 400 <= responseCode <= 599:
                     ## Failure
-                    logging.info("""ERROR @ftp.cmds.ACCT - \t
-                        1) USER-request: <%s>, USER-response: <%s>, \t
-                        2) PASS-request: <%s>, PASS-response: <%s>, \t
-                        3) ACCT-request: <%s>, ACCT-response: <%s>""", 
-                        USERrequest, USERresponse, PASSrequest, PASSresponse, ACCTrequest,  ACCTresponse)
+                    self._createFTPLoginErrorMessage("FAILURE", "ACCT", (USERrequest, USERresponse), (PASSrequest, PASSresponse), (ACCTrequest, ACCTresponse))
                     continue
                 ## There is no else case unless 6xx returned
                     
                 ## otherwise we got 3yz reply, so we continue
                 yield
+                
+                
+    def _createFTPLoginSuccessMessage(self, requestVerb: str, 
+                                        username: Optional[str] = None, 
+                                        password: Optional[str] = None,
+                                        account: Optional[str] = None) -> None:
+            
+        ## Validation performed on arguments
+        ## Cannot have a empty error being logged
+        assert username is not None
+        assert requestVerb in ("USER", "PASS", "ACCT")
+
+        ## Create success message
+        successMsg = "SUCCESS @ftp.cmds.%s - ", requestVerb
+        if username:
+            successMsg += "Username: <%s>, ", username
+        if password:
+            successMsg += "Password: <%s>, ", password
+        if account:
+            successMsg += "Account: <%s>", account
+            
+        ## Log the success message
+        logging.info(successMsg)
 
         
+    def _createFTPLoginErrorMessage(self, errorType: str, requestVerb: str, 
+                                    USERmessages: Optional[Tuple[bytes]] = None, 
+                                    PASSmessages: Optional[Tuple[bytes]] = None,
+                                    ACCTmessages: Optional[Tuple[bytes]] = None) -> None:
+        
+        ## Validation performed on arguments
+        ## Cannot have a empty error being logged
+        assert USERmessages is not None
+        assert errorType in ("FAILURE", "ERROR")
+        assert requestVerb in ("USER", "PASS", "ACCT")
+        
+        ## Create error message
+        errorMsg = "%s @ftp.cmds.%s - \t", errorType, requestVerb
+        if USERmessages:
+            errorMsg += "1) USER-request: <%s>, USER-response: <%s>, \t", USERmessages[0], USERmessages[1]
+        if PASSmessages:
+            errorMsg += "2) PASS-request: <%s>, PASS-response: <%s>, \t", PASSmessages[0], PASSmessages[1]
+        if ACCTmessages:
+            errorMsg += "2) ACCT-request: <%s>, ACCT-response: <%s>, \t", ACCTmessages[0], ACCTmessages[1]
+            
+        ## Log the error message
+        if errorType == "FAILURE":
+            logging.info(errorMsg)
+        else:
+            logging.error(errorMsg)
         
 
         
