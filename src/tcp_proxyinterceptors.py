@@ -1,10 +1,14 @@
 
+from typing import Optional
 from _proxyDS import ProxyInterceptor, Buffer
+import collections
 
 ## NOTE: We should be ok vs Slow
 
 CR = "\r"
 LF = "\n"
+CLIENT = 0
+SERVER = 1
 
 ## NOTE: This is not intended to work robustly - this is just a code that is meant to show an example
 class HTTPProxyInterceptor(ProxyInterceptor):
@@ -16,6 +20,16 @@ class HTTPProxyInterceptor(ProxyInterceptor):
 
 
 class FTPProxyInterceptor(ProxyInterceptor):
+    def __init__(self) -> None:
+        super().__init__()
+        
+        ## Here are the requests
+        self._requestQueue = collections.deque()
+        self._responseQueue = collections.deque()
+
+        ## Here's the generator that holds the state
+        self.updateLoginState = self._updateLoginState()
+        
     ## NOTE: These methods assume that the there is at least one delimited reqeust in buffer
     ## NOTE: These methods assume that the correct buffer has been passed as an argument
     def clientToServerRequestHook(self, buffer: Buffer) -> None:
@@ -24,22 +38,133 @@ class FTPProxyInterceptor(ProxyInterceptor):
         if not delimited:
             raise ValueError("Cannot perform request hook on a request that isn't delimited (i.e. not complete)")
         
-        ## Here we can parse the FTP message
+        self.ftpMessageHook(request=request)
 
 
     def serverToClientRequestHook(self,  buffer: Buffer) -> None:
       ## we retrieve a request from the buffer
-        request, delimited = buffer.popFromQueue()
+        response, delimited = buffer.popFromQueue()
         if not delimited:
             raise ValueError("Cannot perform request hook on a request that isn't delimited (i.e. not complete)")
+        
+        self.ftpMessageHook(response=response)
+        
+        
+    def ftpMessageHook(self, request: Optional[str], response: Optional[str] = None) -> None:
+        ## FTP is intended to have an alternating communication
+        ## -- We cannot control the adversary
+        ## -- But we control our FTP server, 
+        
+        ## RFC 959 Page 37
+        ## 1yz Replies
+        ## "(The user-process sending another command before the
+        ## completion reply would be in violation of protocol; but
+        ## server-FTP processes should queue any commands that
+        ## arrive while a preceding command is in progress.)"
 
+        ## ==> Therefore, even if the adversary spams multiple requests in the same chunk
+        ## the FTP will most likely
+        ## --> 1. parse one request up until a delimeter
+        ## --> 2. process that request
+        ## --> 3. send response
+        ## --> 4. then again try 1. (and will wait until it can retrieve the data from the socket)
+        
+        ## In our solution we alternate between consuming requests, and then replies
+        
+        ## Validates that the method was only called with one argument, not both
+        self.validateArgs(request, response)
+        
+        ## We add the request or response to their corresponding queues
+        if request:
+            self._requestQueue.put(request)
+        else:
+            self._responseQueue.put(response)
+            
+        ## We then check if there exists a request with a corresponding response
+        if min(len(self._requestQueue), len(self._responseQueue)) > 0:
+            ## execute a generator (that maintains the state of the login mechanism)
+            self.updateLoginState()
+    
+        return None
+    
+    
+    
+    def _updateLoginState(self) -> None:
+        ## Now we perform the logic
+        ## We continuously track logins until the ftp connection is shut down
+        ## We refer to Page 58 of the FTP RFC 959 for the Login Sequence
+        
+        ## NOTE: The sequence must be adhered to according to the specification
+        ## -- Otherwise the 503 reply code wouldn't exist for PASS and ACCT which have
+        ## commands that preceed it
+        
+        while True:
+            ## Define variables
+            USER = None
+            PASS = None
+            ACCT = None
 
-    def _getCredentials(self, request = None, reply = None) -> None:
-        ## So 
-        ...
-
+            ## 1. First Request
+            request = self._requestQueue.pop()
+            response = self._responseQueue.pop()
+            
+            if self.isUSERRequest(request):
+                responseCode = self.getResponseCode(response)
+                if 100 <= responseCode <= 199:
+                    ## Error
+                    continue
+                elif 200 <= responseCode <= 299:
+                    ## Success
+                    continue
+                elif 400 <= responseCode <= 599:
+                    ## Failure
+                    continue
+                    
+                ## otherwise we got 3yz reply, so we continue
+                yield
+            
+            ## 2. Second Request
+            request = self._requestQueue.pop()
+            response = self._responseQueue.pop()
+            
+            if self.isPASSRequest(request):
+                responseCode = self.getResponseCode(response)
+                if 100 <= responseCode <= 199:
+                    ## Error
+                    continue
+                elif 200 <= responseCode <= 299:
+                    ## Success
+                    continue
+                elif 400 <= responseCode <= 599:
+                    ## Failure
+                    continue
+                    
+                ## otherwise we got 3yz reply, so we continue
+                yield
+                
+            ## 3. Third Request
+            request = self._requestQueue.pop()
+            response = self._responseQueue.pop()
+            
+            if self.isACCTRequest(request):
+                responseCode = self.getResponseCode(response)
+                if 100 <= responseCode <= 199 or 300 <= responseCode <= 399:
+                    ## Error
+                    continue
+                elif 200 <= responseCode <= 299:
+                    ## Success
+                    continue
+                elif 400 <= responseCode <= 599:
+                    ## Failure
+                    continue
+                ## There is no else case unless 6xx returned
+                    
+                ## otherwise we got 3yz reply, so we continue
+                yield
 
         
+        
+
 
 
 ## The FTP request format is as follows
