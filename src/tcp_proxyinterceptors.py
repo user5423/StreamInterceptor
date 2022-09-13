@@ -1,5 +1,5 @@
-
 from _proxyDS import ProxyInterceptor, Buffer
+
 
 ## NOTE: This is not intended to work robustly - this is just a code that is meant to show an example
 class HTTPProxyInterceptor(ProxyInterceptor):
@@ -8,5 +8,4 @@ class HTTPProxyInterceptor(ProxyInterceptor):
 
     def serverToClientHook(self, requestChunk: bytes, buffer: "Buffer") -> bytes:
         buffer._data = buffer._data.replace(b"127.0.0.1:80", b"0.0.0.0:8080")
-
 
