@@ -14,6 +14,7 @@ class HTTPProxyInterceptor(ProxyInterceptor):
         buffer._data = buffer._data.replace(b"127.0.0.1:80", b"0.0.0.0:8080")
 
 
+
 class FTPProxyInterceptor(ProxyInterceptor):
     def __init__(self) -> None:
         super().__init__()
@@ -24,6 +25,8 @@ class FTPProxyInterceptor(ProxyInterceptor):
 
         ## Here's the generator that holds the state
         self.updateLoginState = self._updateLoginState()
+        
+        
         
     ## NOTE: These methods assume that the there is at least one delimited reqeust in buffer
     ## NOTE: These methods assume that the correct buffer has been passed as an argument
@@ -83,7 +86,6 @@ class FTPProxyInterceptor(ProxyInterceptor):
         return None
     
     
-    
     def _updateLoginState(self) -> None:
         ## Now we perform the logic
         ## We continuously track logins until the ftp connection is shut down
@@ -112,7 +114,6 @@ class FTPProxyInterceptor(ProxyInterceptor):
             ## to trigger a command sequence. This is why we check every request to see if it is a USER request which will trigger
             ## the login command sequence
             if self.isUSERRequest(request):
-                username = self.getUsername(request)
                 responseCode = self.getResponseCode(response)
                 if 100 <= responseCode <= 199:
                     ## Error
@@ -122,7 +123,10 @@ class FTPProxyInterceptor(ProxyInterceptor):
                 elif 200 <= responseCode <= 299:
                     ## Success
                     ## NOTE: You should not be able to login with just USER command
+                    username = self.getUsername(request)
                     self._createFTPLoginSuccessMessage(username)
+                    logging.CRITICAL("CRITICAL: A user was able to login only by using a 'USER' command. \
+                                     This means they didn't require a password which should NOT happen")
                     yield
                     continue
                 elif 400 <= responseCode <= 599:
@@ -155,6 +159,7 @@ class FTPProxyInterceptor(ProxyInterceptor):
                 ## Success
                 password = self.getPassword(request)
                 self._createFTPLoginSuccessMessage(username, password)
+                self._executeLoginSuccessHook(username=username, password=password)
                 yield
                 continue
             elif 400 <= responseCode <= 599:
@@ -182,6 +187,7 @@ class FTPProxyInterceptor(ProxyInterceptor):
                 ## Success
                 account = self.getAccount(request)
                 self._createFTPLoginSuccessMessage(username, password, account)
+                logging.CRITICAL("CRITICAL: A user was able to login using 'ACCT' - The FTP server should NOT be configured for this")
                 yield
                 continue
             elif 400 <= responseCode <= 599:
@@ -193,6 +199,12 @@ class FTPProxyInterceptor(ProxyInterceptor):
                     
             ## otherwise we got 3yz reply, so we continue
             yield
+            
+            
+    def _executeFTPLoginSuccessHook(self, username: str, password: str) -> None:
+        """This will async communicate with the _database class component to check whether the creds are a bait trap"""
+        raise NotImplemented
+        ...
             
 
     def _createFTPLoginSuccessMessage(self, requestVerb: str, 
