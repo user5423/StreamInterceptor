@@ -1,4 +1,5 @@
 
+import logging
 from typing import Optional
 from _proxyDS import ProxyInterceptor, Buffer
 import collections
@@ -101,23 +102,40 @@ class FTPProxyInterceptor(ProxyInterceptor):
         while True:
             ## Define variables
             USER = None
+            USERrequest = None
+            USERresponse = None
+            
             PASS = None
+            PASSrequest = None
+            PASSresponse = None
+            
             ACCT = None
+            ACCTrequest = None
+            ACCTresponse = None
 
             ## 1. First Request
             request = self._requestQueue.pop()
             response = self._responseQueue.pop()
             
             if self.isUSERRequest(request):
+                USER = self.getUsername(request)
                 responseCode = self.getResponseCode(response)
                 if 100 <= responseCode <= 199:
                     ## Error
+                    logging.error("""ERROR @ftp.cmds.USER - \t
+                                  1) USER-request: <%s>, USER-response: <%s>""",
+                                  USERrequest, USERresponse)
                     continue
                 elif 200 <= responseCode <= 299:
                     ## Success
+                    ## NOTE: You should not be able to login with just USER command
+                    logging.info("SUCCESS @ftp.cmds.USER - Username: <%s>", USER)
                     continue
                 elif 400 <= responseCode <= 599:
                     ## Failure
+                    logging.info("""FAILURE @ftp.cmds.USER - \t
+                                  1) USER-request: <%s>, USER-response: <%s>""",
+                                  USERrequest, USERresponse)
                     continue
                     
                 ## otherwise we got 3yz reply, so we continue
@@ -131,12 +149,21 @@ class FTPProxyInterceptor(ProxyInterceptor):
                 responseCode = self.getResponseCode(response)
                 if 100 <= responseCode <= 199:
                     ## Error
+                    logging.error("""ERROR @ftp.cmds.PASS - \t
+                                  1) USER-request: <%s>, USER-response: <%s>, \t
+                                  2) PASS-request: <%s>, PASS-response: <%s>""", 
+                                  USERrequest, USERresponse, PASSrequest, PASSresponse)
                     continue
                 elif 200 <= responseCode <= 299:
                     ## Success
+                    logging.info("SUCCESS @ftp.cmds.PASS - Username: <%s>, PASSWORD: <%s>", USER, PASS)
                     continue
                 elif 400 <= responseCode <= 599:
                     ## Failure
+                    logging.info("""FAILURE @ftp.cmds.PASS - \t
+                                  1) USER-request: <%s>, USER-response: <%s>, \t
+                                  2) PASS-request: <%s>, PASS-response: <%s>""", 
+                                  USERrequest, USERresponse, PASSrequest, PASSresponse)
                     continue
                     
                 ## otherwise we got 3yz reply, so we continue
@@ -150,17 +177,31 @@ class FTPProxyInterceptor(ProxyInterceptor):
                 responseCode = self.getResponseCode(response)
                 if 100 <= responseCode <= 199 or 300 <= responseCode <= 399:
                     ## Error
+                    logging.error("""ERROR @ftp.cmds.ACCT - \t
+                        1) USER-request: <%s>, USER-response: <%s>, \t
+                        2) PASS-request: <%s>, PASS-response: <%s>, \t
+                        3) ACCT-request: <%s>, ACCT-response: <%s>""", 
+                        USERrequest, USERresponse, PASSrequest, PASSresponse, ACCTrequest,  ACCTresponse)
                     continue
                 elif 200 <= responseCode <= 299:
                     ## Success
+                    logging.info("SUCCESS @ftp.cmds.PASS - Username: <%s>, PASSWORD: <%s>, ACCT: <%s>", USER, PASS, ACCT)
                     continue
                 elif 400 <= responseCode <= 599:
                     ## Failure
+                    logging.info("""ERROR @ftp.cmds.ACCT - \t
+                        1) USER-request: <%s>, USER-response: <%s>, \t
+                        2) PASS-request: <%s>, PASS-response: <%s>, \t
+                        3) ACCT-request: <%s>, ACCT-response: <%s>""", 
+                        USERrequest, USERresponse, PASSrequest, PASSresponse, ACCTrequest,  ACCTresponse)
                     continue
                 ## There is no else case unless 6xx returned
                     
                 ## otherwise we got 3yz reply, so we continue
                 yield
+
+        
+        
 
         
         
