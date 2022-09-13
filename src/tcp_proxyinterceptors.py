@@ -166,6 +166,60 @@ class FTPProxyInterceptor(ProxyInterceptor):
         
 
 
+## Defined behavior for
+## -- Success
+##      - Reset all variables in generator and start at top of while loop (I.E. REEST TO INITIAL STATE)
+## -- Error
+##      - TODO: No Idea
+## -- Failure
+##      - TODO: No idea
+
+## My interpretation of RFC 595 is that error and failure results in the same action in our case
+
+## For 5yz and 4yz, RFC 959 (page 37/38) specifies that:
+##  - "reinitiate the command sequence"
+## 4yz and 5yz directly correspond to FAILURE
+
+## From context it seems that
+## -- Failure: means an expected problem arose (e.g. someone sent incorrect creds)
+## -- Error: means an unexpected problem arose (e.g. some internal error arose resulting in an unexpected return value)
+
+## Error is worse than Failure
+## --> So I assume that the measures taken by error should be stricter than failure
+## --> Failure has maximum measure (i.e. restart the command sequence)
+## --> Therefore Error should have this (at least)
+## --> Alternatively, it causes the FTP client to drop the connection
+        
+# ReplyCodes
+# User:
+#   230 
+#   530
+#   500, 501, 421
+#   331, 332
+# Password:
+#   230
+#   202
+#   530
+#   500, 501, 503, 421
+#   332
+
+# 202 - Command not implemented, superfluous at this site (how does this differ to 502?)
+# 230 - User Logged in
+# 331 - Username Okay, need password
+# 332 - Need account for login
+# 421 - Service is not available
+# 530 - Not Logged in
+# 500 - Syntax error, command unrecognized
+# 501 - Syntax error in parameters or arguments
+# 503 - Bad sequence of commands (maybe executed PASS command without USER command first??)
+
+
+# 1x - Postiive Preliminary (e.g. Action initiated, waiting for another reply)
+# 2x - Postive Completion (e.g. Action success)
+# 3x - Postivei intermediate reply (e.g. a set in the action was performed successfully, requires additional input data)
+# 4x - Transient Negative Completion Reply (Temporary)
+# 5x - Permenant Negative Completion reply 
+
 
 ## The FTP request format is as follows
 ## - VERB PARAM \015\012 (CLRF)
