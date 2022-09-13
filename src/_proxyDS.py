@@ -12,11 +12,11 @@ proxyHandlerDescriptor = NamedTuple("ProxyHandlerData", [("PROXY_HOST", str), ("
 class ProxyInterceptor:
     ## NOTE: This needs to rewrite any requests to the real server
     def clientToServerHook(self, requestChunk: bytes, buffer: "Buffer") -> None:
-         ...
+        raise NotImplementedError
 
     ## NOTE: This needs to rewrite any responses back to the client
     def serverToClientHook(self, responseChunk: bytes, buffer: "Buffer") -> None:
-         ...
+        raise NotImplementedError
 
 
 ## The Buffer needs to be rewritten

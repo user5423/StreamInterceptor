@@ -1,6 +1,4 @@
 
-from multiprocessing.sharedctypes import Value
-from tkinter import N
 from _proxyDS import ProxyInterceptor, Buffer
 
 ## NOTE: We should be ok vs Slow
@@ -18,11 +16,30 @@ class HTTPProxyInterceptor(ProxyInterceptor):
 
 
 class FTPProxyInterceptor(ProxyInterceptor):
-    def clientToServerHook(self, requestChunk: bytes, buffer: "Buffer") -> None:
+    ## NOTE: These methods assume that the there is at least one delimited reqeust in buffer
+    ## NOTE: These methods assume that the correct buffer has been passed as an argument
+    def clientToServerRequestHook(self, buffer: Buffer) -> None:
+        ## we retrieve a request from the buffer
+        request, delimited = buffer.popFromQueue()
+        if not delimited:
+            raise ValueError("Cannot perform request hook on a request that isn't delimited (i.e. not complete)")
+        
+        ## Here we can parse the FTP message
+
+
+    def serverToClientRequestHook(self,  buffer: Buffer) -> None:
+      ## we retrieve a request from the buffer
+        request, delimited = buffer.popFromQueue()
+        if not delimited:
+            raise ValueError("Cannot perform request hook on a request that isn't delimited (i.e. not complete)")
+
+
+    def _getCredentials(self, request = None, reply = None) -> None:
+        ## So 
         ...
 
-    def serverToClientHook(self, responseChunk: bytes, buffer: "Buffer") -> None:
-        ...
+
+        
 
 
 ## The FTP request format is as follows
