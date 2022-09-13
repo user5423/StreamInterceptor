@@ -99,88 +99,106 @@ class FTPProxyInterceptor(ProxyInterceptor):
         ## -- Otherwise the 503 reply code wouldn't exist for PASS and ACCT which have
         ## commands that preceed it
         
+        ## NOTE: There is no need for an else statement for each request below
+        
+        
         while True:
             ## Define variables
-            username = None
-            USERrequest = None
-            USERresponse = None
-            
-            password = None
-            PASSrequest = None
-            PASSresponse = None
-            
-            account = None
-            ACCTrequest = None
-            ACCTresponse = None
+            username, USERrequest, USERresponse = None, None, None
+            password, PASSrequest, PASSresponse = None, None, None
+            account, ACCTrequest, ACCTresponse = None, None, None
 
-            ## 1. First Request
+            ## 1. First Request (USER)
             request = self._requestQueue.pop()
             response = self._responseQueue.pop()
             
+            ## NOTE: The reason why the first step is different from step 2 and 3 is that we need to wait for the USER command
+            ## to trigger a command sequence. This is why we check every request to see if it is a USER request which will trigger
+            ## the login command sequence
             if self.isUSERRequest(request):
-                USER = self.getUsername(request)
+                username = self.getUsername(request)
                 responseCode = self.getResponseCode(response)
                 if 100 <= responseCode <= 199:
                     ## Error
                     self._createFTPLoginErrorMessage("ERROR", "USER", (USERrequest, USERresponse))
+                    yield
                     continue
                 elif 200 <= responseCode <= 299:
                     ## Success
                     ## NOTE: You should not be able to login with just USER command
                     self._createFTPLoginSuccessMessage(username)
+                    yield
                     continue
                 elif 400 <= responseCode <= 599:
                     ## Failure
                     self._createFTPLoginErrorMessage("FAILURE", "USER", (USERrequest, USERresponse))
+                    yield
                     continue
                     
-                ## otherwise we got 3yz reply, so we continue
-                yield
-            
-            ## 2. Second Request
-            request = self._requestQueue.pop()
-            response = self._responseQueue.pop()
-            
-            if self.isPASSRequest(request):
-                responseCode = self.getResponseCode(response)
-                if 100 <= responseCode <= 199:
-                    ## Error
-                    self._createFTPLoginErrorMessage("ERROR", "PASS", (USERrequest, USERresponse), (PASSrequest, PASSresponse))
-                    continue
-                elif 200 <= responseCode <= 299:
-                    ## Success
-                    self._createFTPLoginSuccessMessage(username, password)
-                    continue
-                elif 400 <= responseCode <= 599:
-                    ## Failure
-                    self._createFTPLoginErrorMessage("FAILURE", "PASS", (USERrequest, USERresponse), (PASSrequest, PASSresponse))
-                    continue
-                    
-                ## otherwise we got 3yz reply, so we continue
+                ## otherwise we got 3yz reply (intermediary positive reply), so we continue with the command sequence
                 yield
                 
-            ## 3. Third Request
+            ## otherwise, we didn't get a USER request, so we ignore it, and go back to the top of the while loop
+            else:
+                yield
+                continue
+            
+            
+            
+            ## 2. Second Request (PASS)
             request = self._requestQueue.pop()
             response = self._responseQueue.pop()
             
-            if self.isACCTRequest(request):
-                responseCode = self.getResponseCode(response)
-                if 100 <= responseCode <= 199 or 300 <= responseCode <= 399:
-                    ## Error
-                    self._createFTPLoginErrorMessage("ERROR", "ACCT", (USERrequest, USERresponse), (PASSrequest, PASSresponse), (ACCTrequest, ACCTresponse))
-                    continue
-                elif 200 <= responseCode <= 299:
-                    ## Success
-                    self._createFTPLoginSuccessMessage(username, password, account)
-                    continue
-                elif 400 <= responseCode <= 599:
-                    ## Failure
-                    self._createFTPLoginErrorMessage("FAILURE", "ACCT", (USERrequest, USERresponse), (PASSrequest, PASSresponse), (ACCTrequest, ACCTresponse))
-                    continue
+            responseCode = self.getResponseCode(response)
+            if 100 <= responseCode <= 199:
+                ## Error
+                self._createFTPLoginErrorMessage("ERROR", "PASS", (USERrequest, USERresponse), (PASSrequest, PASSresponse))
+                yield
+                continue
+            elif 200 <= responseCode <= 299:
+                ## Success
+                password = self.getPassword(request)
+                self._createFTPLoginSuccessMessage(username, password)
+                yield
+                continue
+            elif 400 <= responseCode <= 599:
+                ## Failure
+                self._createFTPLoginErrorMessage("FAILURE", "PASS", (USERrequest, USERresponse), (PASSrequest, PASSresponse))
+                yield
+                continue
+                    
+            ## otherwise we got 3yz reply, so we continue
+            yield
+
+            
+            ## 3. Third Request (ACCT)
+            request = self._requestQueue.pop()
+            response = self._responseQueue.pop()
+            
+            responseCode = self.getResponseCode(response)
+            if 100 <= responseCode <= 199 or 300 <= responseCode <= 399:
+                ## Error
+                self._createFTPLoginErrorMessage("ERROR", "ACCT", (USERrequest, USERresponse), (PASSrequest, PASSresponse), (ACCTrequest, ACCTresponse))
+                yield
+                continue
+            elif 200 <= responseCode <= 299:
+                ## Success
+                account = self.getAccount(request)
+                self._createFTPLoginSuccessMessage(username, password, account)
+                yield
+                continue
+            elif 400 <= responseCode <= 599:
+                ## Failure
+                self._createFTPLoginErrorMessage("FAILURE", "ACCT", (USERrequest, USERresponse), (PASSrequest, PASSresponse), (ACCTrequest, ACCTresponse))
+                yield
+                continue
                 ## There is no else case unless 6xx returned
                     
-                ## otherwise we got 3yz reply, so we continue
-                yield
+            ## otherwise we got 3yz reply, so we continue
+            yield
+            
+
+            
                 
                 
     def _createFTPLoginSuccessMessage(self, requestVerb: str, 
