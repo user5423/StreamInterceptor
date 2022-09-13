@@ -4,12 +4,6 @@ from typing import Optional, Tuple
 from _proxyDS import ProxyInterceptor, Buffer
 import collections
 
-## NOTE: We should be ok vs Slow
-
-CR = "\r"
-LF = "\n"
-CLIENT = 0
-SERVER = 1
 
 ## NOTE: This is not intended to work robustly - this is just a code that is meant to show an example
 class HTTPProxyInterceptor(ProxyInterceptor):
@@ -108,6 +102,8 @@ class FTPProxyInterceptor(ProxyInterceptor):
             password, PASSrequest, PASSresponse = None, None, None
             account, ACCTrequest, ACCTresponse = None, None, None
 
+
+
             ## 1. First Request (USER)
             request = self._requestQueue.pop()
             response = self._responseQueue.pop()
@@ -171,6 +167,7 @@ class FTPProxyInterceptor(ProxyInterceptor):
             yield
 
             
+            
             ## 3. Third Request (ACCT)
             request = self._requestQueue.pop()
             response = self._responseQueue.pop()
@@ -198,9 +195,6 @@ class FTPProxyInterceptor(ProxyInterceptor):
             yield
             
 
-            
-                
-                
     def _createFTPLoginSuccessMessage(self, requestVerb: str, 
                                         username: Optional[str] = None, 
                                         password: Optional[str] = None,
