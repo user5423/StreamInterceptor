@@ -9,16 +9,16 @@ from _proxyDS import ProxyInterceptor, Buffer
 class FTPProxyInterceptor(ProxyInterceptor):
     def __init__(self) -> None:
         super().__init__()
-        
+
         ## Here are the requests
         self._requestQueue = collections.deque()
         self._responseQueue = collections.deque()
 
         ## Here's the generator that holds the state
-        self.updateLoginState = self._updateLoginState()
-        
-        
-        
+        self._loginStateGenerator = self._updateLoginState()
+
+
+
     ## NOTE: These methods assume that the there is at least one delimited reqeust in buffer
     ## NOTE: These methods assume that the correct buffer has been passed as an argument
     def clientToServerRequestHook(self, buffer: Buffer) -> None:
@@ -26,7 +26,7 @@ class FTPProxyInterceptor(ProxyInterceptor):
         request, delimited = buffer.popFromQueue()
         if not delimited:
             raise ValueError("Cannot perform request hook on a request that isn't delimited (i.e. not complete)")
-        
+
         self.ftpMessageHook(request=request)
 
 
@@ -36,16 +36,16 @@ class FTPProxyInterceptor(ProxyInterceptor):
         response, delimited = buffer.popFromQueue()
         if not delimited:
             raise ValueError("Cannot perform request hook on a request that isn't delimited (i.e. not complete)")
-        
+
         self.ftpMessageHook(response=response)
 
-        
-        
-    def ftpMessageHook(self, request: Optional[str], response: Optional[str] = None) -> None:
+
+
+    def ftpMessageHook(self, request: Optional[str] = None, response: Optional[str] = None) -> None:
         ## FTP is intended to have an alternating communication
         ## -- We cannot control the adversary
-        ## -- But we control our FTP server, 
-        
+        ## -- But we control our FTP server,
+
         ## RFC 959 Page 37
         ## 1yz Replies
         ## "(The user-process sending another command before the
@@ -59,38 +59,42 @@ class FTPProxyInterceptor(ProxyInterceptor):
         ## --> 2. process that request
         ## --> 3. send response
         ## --> 4. then again try 1. (and will wait until it can retrieve the data from the socket)
-        
+
         ## In our solution we alternate between consuming requests, and then replies
-        
+
         ## Validates that the method was only called with one argument, not both
-        self.validateArgs(request, response)
-        
+        self._validateHookArgs(request, response)
+
         ## We add the request or response to their corresponding queues
         if request:
-            self._requestQueue.put(request)
+            self._requestQueue.append(request)
         else:
-            self._responseQueue.put(response)
-            
+            self._responseQueue.append(response)
+
         ## We then check if there exists a request with a corresponding response
         if min(len(self._requestQueue), len(self._responseQueue)) > 0:
             ## execute a generator (that maintains the state of the login mechanism)
-            self.updateLoginState()
-    
+            next(self._loginStateGenerator)
+
         return None
-    
-    
+
+    def _validateHookArgs(self, request: Optional[str] = None, response: Optional[str] = None) -> None:
+        if not (bool(request) ^ bool(response)):
+            raise Exception(f"Cannot only pass a request OR response, not both - request={request}, response={response}")
+        
+
     def _updateLoginState(self) -> None:
         ## Now we perform the logic
         ## We continuously track logins until the ftp connection is shut down
         ## We refer to Page 58 of the FTP RFC 959 for the Login Sequence
-        
+
         ## NOTE: The sequence must be adhered to according to the specification
         ## -- Otherwise the 503 reply code wouldn't exist for PASS and ACCT which have
         ## commands that preceed it
-        
+
         ## NOTE: There is no need for an else statement for each request below
-        
-        
+
+
         while True:
             ## Define variables
             username, USERrequest, USERresponse = None, None, None
@@ -102,7 +106,7 @@ class FTPProxyInterceptor(ProxyInterceptor):
             ## 1. First Request (USER)
             request = self._requestQueue.pop()
             response = self._responseQueue.pop()
-            
+
             ## NOTE: The reason why the first step is different from step 2 and 3 is that we need to wait for the USER command
             ## to trigger a command sequence. This is why we check every request to see if it is a USER request which will trigger
             ## the login command sequence
@@ -118,7 +122,7 @@ class FTPProxyInterceptor(ProxyInterceptor):
                     ## NOTE: You should not be able to login with just USER command
                     username = self._getUsername(request)
                     self._createFTPLoginSuccessMessage(username)
-                    logging.CRITICAL("CRITICAL: A user was able to login only by using a 'USER' command. \
+                    logging.critical("CRITICAL: A user was able to login only by using a 'USER' command. \
                                      This means they didn't require a password which should NOT happen")
                     yield
                     continue
@@ -127,21 +131,21 @@ class FTPProxyInterceptor(ProxyInterceptor):
                     self._createFTPLoginErrorMessage("FAILURE", "USER", (USERrequest, USERresponse))
                     yield
                     continue
-                    
+
                 ## otherwise we got 3yz reply (intermediary positive reply), so we continue with the command sequence
                 yield
-                
+
             ## otherwise, we didn't get a USER request, so we ignore it, and go back to the top of the while loop
             else:
                 yield
                 continue
-            
-            
-            
+
+
+
             ## 2. Second Request (PASS)
             request = self._requestQueue.pop()
             response = self._responseQueue.pop()
-            
+
             responseCode = self._getResponseCode(response)
             if 100 <= responseCode <= 199:
                 ## Error
@@ -160,16 +164,16 @@ class FTPProxyInterceptor(ProxyInterceptor):
                 self._createFTPLoginErrorMessage("FAILURE", "PASS", (USERrequest, USERresponse), (PASSrequest, PASSresponse))
                 yield
                 continue
-                    
+
             ## otherwise we got 3yz reply, so we continue
             yield
 
-            
-            
+
+
             ## 3. Third Request (ACCT)
             request = self._requestQueue.pop()
             response = self._responseQueue.pop()
-            
+
             responseCode = self._getResponseCode(response)
             if 100 <= responseCode <= 199 or 300 <= responseCode <= 399:
                 ## Error
@@ -180,7 +184,7 @@ class FTPProxyInterceptor(ProxyInterceptor):
                 ## Success
                 account = self._getAccount(request)
                 self._createFTPLoginSuccessMessage(username, password, account)
-                logging.CRITICAL("CRITICAL: A user was able to login using 'ACCT' - The FTP server should NOT be configured for this")
+                logging.critical("CRITICAL: A user was able to login using 'ACCT' - The FTP server should NOT be configured for this")
                 yield
                 continue
             elif 400 <= responseCode <= 599:
@@ -189,22 +193,21 @@ class FTPProxyInterceptor(ProxyInterceptor):
                 yield
                 continue
                 ## There is no else case unless 6xx returned
-                    
+
             ## otherwise we got 3yz reply, so we continue
             yield
-            
+
 
     def _executeFTPLoginSuccessHook(self, username: str, password: str) -> None:
         """This will async communicate with the _database class component to check whether the creds are a bait trap"""
-        raise NotImplemented
-        ...
-            
+        raise NotImplementedError()
 
-    def _createFTPLoginSuccessMessage(self, requestVerb: str, 
-                                        username: Optional[str] = None, 
+
+    def _createFTPLoginSuccessMessage(self, requestVerb: str,
+                                        username: Optional[str] = None,
                                         password: Optional[str] = None,
                                         account: Optional[str] = None) -> None:
-            
+
         ## Validation performed on arguments
         ## Cannot have a empty error being logged
         assert username is not None
@@ -218,22 +221,22 @@ class FTPProxyInterceptor(ProxyInterceptor):
             successMsg += "Password: <%s>, ", password
         if account:
             successMsg += "Account: <%s>", account
-            
+
         ## Log the success message
         logging.info(successMsg)
 
-        
-    def _createFTPLoginErrorMessage(self, errorType: str, requestVerb: str, 
-                                    USERmessages: Optional[Tuple[bytes]] = None, 
+
+    def _createFTPLoginErrorMessage(self, errorType: str, requestVerb: str,
+                                    USERmessages: Optional[Tuple[bytes]] = None,
                                     PASSmessages: Optional[Tuple[bytes]] = None,
                                     ACCTmessages: Optional[Tuple[bytes]] = None) -> None:
-        
+
         ## Validation performed on arguments
         ## Cannot have a empty error being logged
         assert USERmessages is not None
         assert errorType in ("FAILURE", "ERROR")
         assert requestVerb in ("USER", "PASS", "ACCT")
-        
+
         ## Create error message
         errorMsg = "%s @ftp.cmds.%s - \t", errorType, requestVerb
         if USERmessages:
@@ -242,27 +245,28 @@ class FTPProxyInterceptor(ProxyInterceptor):
             errorMsg += "2) PASS-request: <%s>, PASS-response: <%s>, \t", PASSmessages[0], PASSmessages[1]
         if ACCTmessages:
             errorMsg += "2) ACCT-request: <%s>, ACCT-response: <%s>, \t", ACCTmessages[0], ACCTmessages[1]
-            
+
         ## Log the error message
         if errorType == "FAILURE":
             logging.info(errorMsg)
         else:
             logging.error(errorMsg)
-            
-            
-            
-    def isUSERRequest(self, request: str) -> bool:
+
+
+
+    def _isUSERRequest(self, request: str) -> bool:
         ## NOTE: We don't need to check if this is a valid request as we'll only process the request arguments if
         ## the reply code is a positive one
         ## NOTE: We are being softer than RFC 959 on the standards by stripping whitespace (in case there are FTP
         ## implementations that have the same behavior)
-        
+
         ## NOTE: the regex checks if the strings starts with zero or more spaces and then has a USER string succeedeing it
         if re.search('^\s*USER', request):
             return True
         return False
-        
-        
+
+
+    ## TODO: Rewrite these three methods to use regex searches
     ## NOTE: These methods will only be executed assuming that the request received a positive 3xx response
     ## --> This means input validation on the request isn't neccessary
     def _getUsername(self, request: str) -> str:
@@ -272,28 +276,28 @@ class FTPProxyInterceptor(ProxyInterceptor):
         ## e.g. in the below, the "space" should not be between the last param and the CRLF delimeter
         request = request.strip(" \r\n")
         entities = [entity.strip(" ") for entity in request.split(" ")]
-        
+
         if len(entities) != 2:
             raise Exception(f"Cannot have a USER command that doesn't have two entities - {request}")
         return entities[1]
-    
+
     def _getPassword(self, request: str) -> str:
         request = request.strip(" \r\n")
         entities = [entity.strip(" ") for entity in request.split(" ")]
-        
+
         if len(entities) != 2:
             raise Exception(f"Cannot have a PASS command that doesn't have two entities - {request}")
         return entities[1]
-    
+
     def _getAccount(self, request: str) -> str:
         request = request.strip(" \r\n")
         entities = [entity.strip(" ") for entity in request.split(" ")]
-        
+
         if len(entities) != 2:
             raise Exception(f"Cannot have a ACCT command that doesn't have two entities - {request}")
         return entities[1]
-    
-    
+
+
     def _getResponseCode(self, request: str) -> Optional[int]:
         ## All reply codes have a length of 3
         ## Reply code xyz
@@ -304,11 +308,11 @@ class FTPProxyInterceptor(ProxyInterceptor):
         if ret is None:
             return None
         return int(ret.groups(0))
-        
-        
 
-        
-        
+
+
+
+## NOTES ----------------------------------------------------------------------------------------------
 
 
 ## Defined behavior for
@@ -334,10 +338,10 @@ class FTPProxyInterceptor(ProxyInterceptor):
 ## --> Failure has maximum measure (i.e. restart the command sequence)
 ## --> Therefore Error should have this (at least)
 ## --> Alternatively, it causes the FTP client to drop the connection
-        
+
 # ReplyCodes
 # User:
-#   230 
+#   230
 #   530
 #   500, 501, 421
 #   331, 332
@@ -363,7 +367,7 @@ class FTPProxyInterceptor(ProxyInterceptor):
 # 2x - Postive Completion (e.g. Action success)
 # 3x - Postivei intermediate reply (e.g. a set in the action was performed successfully, requires additional input data)
 # 4x - Transient Negative Completion Reply (Temporary)
-# 5x - Permenant Negative Completion reply 
+# 5x - Permenant Negative Completion reply
 
 
 ## The FTP request format is as follows
@@ -379,7 +383,7 @@ class FTPProxyInterceptor(ProxyInterceptor):
 ## Once this is satisfied, we then check these username, password combo against the database
 
 
-## So according to the article, 
+## So according to the article,
 ## - https://cr.yp.to/ftp/request.html
 ## some client-PI fail to send CR, so it recommends to only look for \n (as this isn't allowed in the param value)
 
@@ -391,7 +395,7 @@ class FTPProxyInterceptor(ProxyInterceptor):
 ##      - for each one we find
 ##          - we split the temp buffer into several Layer 7 requests (maybe in something like a queue)
 ##          - i.e. and then perform the hook for each complete request
-##          - each call to the hook consumes request 
+##          - each call to the hook consumes request
 
 ## NOTE: One issue is that delimeters may have multiples bytes
 ##  - HOWEVER, the goal of delimeters to seperate two entities
@@ -409,7 +413,7 @@ class FTPProxyInterceptor(ProxyInterceptor):
 ##          - that means our previous code didn't work as it should have found thie delimeter
 ##          - in the last recv()
 ## This solution works well enough as we only reread a small constant amount of the content
-##  - This helps us avoid huge requests that are chunked into bytes (causing many calls to recv())  
+##  - This helps us avoid huge requests that are chunked into bytes (causing many calls to recv())
 ##  - which would slow down the system
 
 
@@ -464,7 +468,7 @@ class FTPProxyInterceptor(ProxyInterceptor):
 ##        | |
 ##         \r
 
-## For example, in the above, 
+## For example, in the above,
 ##  - if we are at 1 and we see another \r, we stay in the same place
 ##  - if we are at 3 and we see another \r, we go to 1 instead of 0
 
@@ -506,7 +510,7 @@ class FTPProxyInterceptor(ProxyInterceptor):
 
 ## NOTE: We need to be careful to find
 ## - what is the reference state behvaior for this
-##  
+##
 
 
 # USER "test"
