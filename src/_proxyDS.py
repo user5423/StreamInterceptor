@@ -39,7 +39,7 @@ class Buffer:
             raise NotImplementedError("Cannot instantiate a requestBuffer object without subclassing")
 
         self.REQUEST_DELIMETER_REGEX: str = "(" + "|".join(self.REQUEST_DELIMITERS) + ")"
-        self.MAX_DELIMETER_LENGTH = len(self.REQUEST_DELIMETERS)
+        self.MAX_DELIMETER_LENGTH = len(self.REQUEST_DELIMITERS)
 
     
     ############### Bytes Operations #######################
@@ -67,12 +67,6 @@ class Buffer:
     def setHook(self, hook: Callable[[bytearray, "Buffer"], None]) -> None:
         self._writeHook = hook
         
-
-    def _writeHook(chunk: bytearray, buffer: "Buffer") -> None:
-        ## NOTE: This method should be overriden by the Buffer.setHook method
-        ## NOTE: This isn't entirely correct anymore as this setHook should be handled by a subclass
-        raise NotImplementedError
-
 
     ############## Request Queue Operations ########################
     def pushToQueue(self, data: bytearray, delimited: bool) -> None:
