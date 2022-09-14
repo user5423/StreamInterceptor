@@ -1,8 +1,9 @@
-
+import re
 import logging
-from typing import Optional, Tuple
-from _proxyDS import ProxyInterceptor, Buffer
 import collections
+from typing import Optional, Tuple
+
+from _proxyDS import ProxyInterceptor, Buffer
 
 
 class FTPProxyInterceptor(ProxyInterceptor):
@@ -105,8 +106,8 @@ class FTPProxyInterceptor(ProxyInterceptor):
             ## NOTE: The reason why the first step is different from step 2 and 3 is that we need to wait for the USER command
             ## to trigger a command sequence. This is why we check every request to see if it is a USER request which will trigger
             ## the login command sequence
-            if self.isUSERRequest(request):
-                responseCode = self.getResponseCode(response)
+            if self._isUSERRequest(request):
+                responseCode = self._getResponseCode(response)
                 if 100 <= responseCode <= 199:
                     ## Error
                     self._createFTPLoginErrorMessage("ERROR", "USER", (USERrequest, USERresponse))
@@ -115,7 +116,7 @@ class FTPProxyInterceptor(ProxyInterceptor):
                 elif 200 <= responseCode <= 299:
                     ## Success
                     ## NOTE: You should not be able to login with just USER command
-                    username = self.getUsername(request)
+                    username = self._getUsername(request)
                     self._createFTPLoginSuccessMessage(username)
                     logging.CRITICAL("CRITICAL: A user was able to login only by using a 'USER' command. \
                                      This means they didn't require a password which should NOT happen")
@@ -141,7 +142,7 @@ class FTPProxyInterceptor(ProxyInterceptor):
             request = self._requestQueue.pop()
             response = self._responseQueue.pop()
             
-            responseCode = self.getResponseCode(response)
+            responseCode = self._getResponseCode(response)
             if 100 <= responseCode <= 199:
                 ## Error
                 self._createFTPLoginErrorMessage("ERROR", "PASS", (USERrequest, USERresponse), (PASSrequest, PASSresponse))
@@ -149,9 +150,9 @@ class FTPProxyInterceptor(ProxyInterceptor):
                 continue
             elif 200 <= responseCode <= 299:
                 ## Success
-                password = self.getPassword(request)
+                password = self._getPassword(request)
                 self._createFTPLoginSuccessMessage(username, password)
-                self._executeLoginSuccessHook(username=username, password=password)
+                self._executeFTPLoginSuccessHook(username=username, password=password)
                 yield
                 continue
             elif 400 <= responseCode <= 599:
@@ -169,7 +170,7 @@ class FTPProxyInterceptor(ProxyInterceptor):
             request = self._requestQueue.pop()
             response = self._responseQueue.pop()
             
-            responseCode = self.getResponseCode(response)
+            responseCode = self._getResponseCode(response)
             if 100 <= responseCode <= 199 or 300 <= responseCode <= 399:
                 ## Error
                 self._createFTPLoginErrorMessage("ERROR", "ACCT", (USERrequest, USERresponse), (PASSrequest, PASSresponse), (ACCTrequest, ACCTresponse))
@@ -177,7 +178,7 @@ class FTPProxyInterceptor(ProxyInterceptor):
                 continue
             elif 200 <= responseCode <= 299:
                 ## Success
-                account = self.getAccount(request)
+                account = self._getAccount(request)
                 self._createFTPLoginSuccessMessage(username, password, account)
                 logging.CRITICAL("CRITICAL: A user was able to login using 'ACCT' - The FTP server should NOT be configured for this")
                 yield
@@ -192,7 +193,7 @@ class FTPProxyInterceptor(ProxyInterceptor):
             ## otherwise we got 3yz reply, so we continue
             yield
             
-            
+
     def _executeFTPLoginSuccessHook(self, username: str, password: str) -> None:
         """This will async communicate with the _database class component to check whether the creds are a bait trap"""
         raise NotImplemented
@@ -247,6 +248,63 @@ class FTPProxyInterceptor(ProxyInterceptor):
             logging.info(errorMsg)
         else:
             logging.error(errorMsg)
+            
+            
+            
+    def isUSERRequest(self, request: str) -> bool:
+        ## NOTE: We don't need to check if this is a valid request as we'll only process the request arguments if
+        ## the reply code is a positive one
+        ## NOTE: We are being softer than RFC 959 on the standards by stripping whitespace (in case there are FTP
+        ## implementations that have the same behavior)
+        
+        ## NOTE: the regex checks if the strings starts with zero or more spaces and then has a USER string succeedeing it
+        if re.search('^\s*USER', request):
+            return True
+        return False
+        
+        
+    ## NOTE: These methods will only be executed assuming that the request received a positive 3xx response
+    ## --> This means input validation on the request isn't neccessary
+    def _getUsername(self, request: str) -> str:
+        ## The User request should be delimited with either \r\n or \r at the END of the request, so we strip that on the end (i.e. right of str)
+        ## NOTE: Although the RFC 959 defines the commands on 1985, we don't have to adhere to its strictness and can
+        ## be lenient in order to interpret requests that would otherwise be incorrect against the standard.
+        ## e.g. in the below, the "space" should not be between the last param and the CRLF delimeter
+        request = request.strip(" \r\n")
+        entities = [entity.strip(" ") for entity in request.split(" ")]
+        
+        if len(entities) != 2:
+            raise Exception(f"Cannot have a USER command that doesn't have two entities - {request}")
+        return entities[1]
+    
+    def _getPassword(self, request: str) -> str:
+        request = request.strip(" \r\n")
+        entities = [entity.strip(" ") for entity in request.split(" ")]
+        
+        if len(entities) != 2:
+            raise Exception(f"Cannot have a PASS command that doesn't have two entities - {request}")
+        return entities[1]
+    
+    def _getAccount(self, request: str) -> str:
+        request = request.strip(" \r\n")
+        entities = [entity.strip(" ") for entity in request.split(" ")]
+        
+        if len(entities) != 2:
+            raise Exception(f"Cannot have a ACCT command that doesn't have two entities - {request}")
+        return entities[1]
+    
+    
+    def _getResponseCode(self, request: str) -> Optional[int]:
+        ## All reply codes have a length of 3
+        ## Reply code xyz
+        ## 1 <= x <= 5
+        ## 0 <= y <= 5
+        ## 0 <= z <= 9 ## not specified on FRC and servers may provide custom replies so we take up the whole range 0-9
+        ret = re.search('^\s*([1-5][0-5][0-9])', request)
+        if ret is None:
+            return None
+        return int(ret.groups(0))
+        
         
 
         
