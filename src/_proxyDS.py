@@ -1,7 +1,7 @@
 import re
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Callable, List, NamedTuple, Tuple
+from typing import Callable, Iterable, List, NamedTuple, Sequence, Tuple
 
 proxyHandlerDescriptor = NamedTuple("ProxyHandlerData", [("PROXY_HOST", str), ("PROXY_PORT", int), ("StreamInterceptor", object)])
 
@@ -34,13 +34,27 @@ class Buffer:
     LF: str = "\n"
 
     def __post_init__(self):
-        ## NOTE: We'll likely change the structure later
-        if len(self.REQUEST_DELIMITERS):
-            raise NotImplementedError("Cannot instantiate a requestBuffer object without subclassing")
-
+        # ## NOTE: We'll likely change the structure later
+        # if len(self.REQUEST_DELIMITERS):
+        #     raise NotImplementedError("Cannot instantiate a requestBuffer object without subclassing")
+        self._validateDelimiters()
         self.REQUEST_DELIMETER_REGEX: str = "(" + "|".join(self.REQUEST_DELIMITERS) + ")"
         self.MAX_DELIMETER_LENGTH = len(self.REQUEST_DELIMITERS)
 
+    def _validateDelimiters(self) -> None:
+        if not isinstance(self.REQUEST_DELIMITERS, Sequence):
+            raise TypeError(f"Incorrect type for Buffer().REQUEST_DELIMITERS - {type(self.REQUEST_DELIMITERS)}")
+        
+        if len(self.REQUEST_DELIMITERS) == 0:
+            raise ValueError("Cannot pass empty REQUEST_DELIMITERS argument")
+        
+        for delimiter in self.REQUEST_DELIMITERS:
+            if not isinstance(delimiter, str):
+                raise TypeError(f"Incorrect type for Buffer().REQUEST_DELIMITERS[i] - {type(delimiter)}")
+            
+        if len(set(self.REQUEST_DELIMITERS)) != len(self.REQUEST_DELIMITERS):
+            raise ValueError(f"Duplicate request delimiters were detected in the argument REQUEST_DELIMITERS")
+            
     
     ############### Bytes Operations #######################
     def read(self, bytes: int = 0) -> bytes:
@@ -84,13 +98,13 @@ class Buffer:
         return None
         
 
-    def popFromQueue(self) -> List[bytearray, bool]:
+    def popFromQueue(self) -> Tuple[bytearray, bool]:
         if not len(self._requests):
             raise IndexError("Cannot pop a request from empty buffer._requests deque")
 
         return self._requests.pop()
 
-    def peakFromQueue(self) -> List[bytearray, bool]:
+    def peakFromQueue(self) -> Tuple[bytearray, bool]:
         if not len(self._requests):
             raise IndexError("Cannot peak a request from empty buffer._requests deque")
         
