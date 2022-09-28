@@ -272,7 +272,6 @@ class Test_Buffer_ByteOperations:
     def test_pop_manyBytes_oneBuffer(self):
         delimiters = ["\r\n"]
         b = Buffer(delimiters)
-        
 
         testBytes = b"t"
         b._data += testBytes
@@ -285,18 +284,78 @@ class Test_Buffer_ByteOperations:
     
     
 
-
     ## write() tests
     
     def test_write_zeroBytes(self):
-        ...
+        delimiters = ["\r\n"]
+        b = Buffer(delimiters)
+        b.execWriteHook = lambda *args, **kwargs: None
+
+        testBytes = b""
+        b.write(testBytes)
+
+        assert b._data == testBytes
+        assert len(b._requests) == 0
         
     def test_write_oneByte(self):
-        ...
+        delimiters = ["\r\n"]
+        b = Buffer(delimiters)
+        b.execWriteHook = lambda *args, **kwargs: None
+
+        testBytes = b"t"
+        b.write(testBytes)
+        
+        assert len(b._data) == len(testBytes)
+        assert len(b._requests) == 0
         
     def test_write_manyBytes(self):
-        ...
+        delimiters = ["\r\n"]
+        b = Buffer(delimiters)
+        b.execWriteHook = lambda *args, **kwargs: None
+
+        testBytes = b"testdata"
+        b.write(testBytes)
         
+        assert len(b._data) == len(testBytes)
+        assert len(b._requests) == 0
+
+    def test_write_zeroBytes_nonEmptyBuffer(self):
+        delimiters = ["\r\n"]
+        b = Buffer(delimiters)
+        b.execWriteHook = lambda *args, **kwargs: None
+
+        b._data += b""
+        testBytes = b"data"
+        b.write(testBytes)
+        
+        assert b._data == bytearray(b"data")
+        assert len(b._requests) == 0
+
+    def test_write_oneByte_nonEmptyBuffer(self):
+        delimiters = ["\r\n"]
+        b = Buffer(delimiters)
+        b.execWriteHook = lambda *args, **kwargs: None
+
+        b._data += b"t"
+        testBytes = b"data"
+        b.write(testBytes)
+        
+        assert b._data == bytearray(b"tdata")
+        assert len(b._requests) == 0
+
+    def test_write_manyBytes_nonEmptyBuffer(self):
+        delimiters = ["\r\n"]
+        b = Buffer(delimiters)
+        b.execWriteHook = lambda *args, **kwargs: None
+
+        b._data += b"test"
+        testBytes = b"data"
+        b.write(testBytes)
+
+        assert b._data == bytearray(b"testdata")
+        assert len(b._requests) == 0
+
+
 
     
     
