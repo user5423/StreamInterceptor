@@ -176,3 +176,131 @@ class Test_Buffer_ByteOperations:
         
     
    
+    ## pop() tests
+ 
+    ## NOTE: The comparisons with for b._data and b.pop() / b.read() has been swapped
+    ## -- this is so that b._data is evaluated before the operation for the pop() ops
+    ## -- this literal order shouldn't matter for the above read() ops
+    
+    ## NOTE: These tests are in the scenario where the number of desired bytes
+    ## to be read is LESS than the number of current bytes stored in the buffer
+    def test_pop_negativeBytes(self):
+        delimiters = ["\r\n"]
+        b = Buffer(delimiters)
+        testBytes = bytearray(b"testdata")
+        b._data += testBytes
+
+        assert testBytes == b.pop(-1)
+        assert len(b._data) == 0
+        assert len(b._requests) == 0
+
+        
+    def test_pop_zeroBytes(self):
+        delimiters = ["\r\n"]
+        b = Buffer(delimiters)
+        
+        testBytes = bytearray(b"testdata")
+        b._data += testBytes
+        bufferLength = len(b._data)
+        
+        assert testBytes[0:0] == b.pop(0)
+        assert bufferLength == len(b._data)
+        assert len(b._requests) == 0
+
+        
+    def test_pop_oneByte(self):
+        delimiters = ["\r\n"]
+        b = Buffer(delimiters)
+        
+        testBytes = bytearray(b"testdata")
+        b._data += testBytes
+        bufferLength = len(b._data)
+        popLength = 1
+        
+        assert testBytes[0:1] == b.pop(1) 
+        assert bufferLength - popLength == len(b._data)
+        assert len(b._requests) == 0
+        
+        
+    def test_pop_manyBytes(self):
+        delimiters = ["\r\n"]
+        b = Buffer(delimiters)
+        
+        testBytes = bytearray(b"testdata")
+        b._data += testBytes
+        bufferLength = len(testBytes)
+        popLength = bufferLength // 2
+        
+        assert testBytes[0:popLength] == b.pop(popLength)
+        assert bufferLength - popLength == len(b._data)
+        assert len(b._requests) == 0
+        
+    
+    ## NOTE: These tests are in the scenario where the number of desired bytes
+    ## to be pop EXCEEDS the number of current bytes stored in the buffer
+    def test_pop_negativeBytes_zeroBuffer(self):
+        delimiters = ["\r\n"]
+        b = Buffer(delimiters)
+        
+        # b._data is initialized as empty bytearray()
+        
+        assert b._data == b.pop(-1)
+        assert len(b._data) == 0
+        assert len(b._requests) == 0
+        
+    def test_pop_zeroBytes_zeroBuffer(self):
+        delimiters = ["\r\n"]
+        b = Buffer(delimiters)
+        
+        # b._data is initialized as empty bytearray()
+        
+        assert bytearray() == b.pop(0)
+        assert len(b._data) == 0
+        assert len(b._requests) == 0
+        
+    def test_pop_oneByte_zeroBuffer(self):
+        delimiters = ["\r\n"]
+        b = Buffer(delimiters)
+        
+        # b._data is initialized as empty bytearray()
+        
+        assert bytearray() == b.pop(1)
+        assert len(b._data) == 0
+        assert len(b._requests) == 0
+        
+        
+    def test_pop_manyBytes_oneBuffer(self):
+        delimiters = ["\r\n"]
+        b = Buffer(delimiters)
+        
+
+        testBytes = b"t"
+        b._data += testBytes
+        bufferLength = len(b._data) + 1
+        
+        assert testBytes == b.pop(bufferLength)
+        assert len(b._data) == 0
+        assert len(b._requests) == 0
+        
+    
+    
+
+
+    ## write() tests
+    
+    def test_write_zeroBytes(self):
+        ...
+        
+    def test_write_oneByte(self):
+        ...
+        
+    def test_write_manyBytes(self):
+        ...
+        
+
+    
+    
+class Test_Buffer_Hooks:
+    ## execWriteHook()
+    ## setHook()
+    ...
