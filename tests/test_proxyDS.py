@@ -81,7 +81,7 @@ class Test_Buffer_ByteOperations:
         delimiters = ["\r\n"]
         b = Buffer(delimiters)
         
-        b._data += b"testdata"
+        b._data += bytearray(b"testdata")
         bufferLength = len(b._data)
         
         assert b.read(-1) == b._data
@@ -93,7 +93,7 @@ class Test_Buffer_ByteOperations:
         delimiters = ["\r\n"]
         b = Buffer(delimiters)
         
-        b._data += b"testdata"
+        b._data += bytearray(b"testdata")
         bufferLength = len(b._data)
         
         assert b.read(0) == b._data[0:0]
@@ -105,7 +105,7 @@ class Test_Buffer_ByteOperations:
         delimiters = ["\r\n"]
         b = Buffer(delimiters)
         
-        b._data += b"testdata"
+        b._data += bytearray(b"testdata")
         bufferLength = len(b._data)
         
         assert b.read(1) == b._data[0:1]
@@ -117,7 +117,7 @@ class Test_Buffer_ByteOperations:
         delimiters = ["\r\n"]
         b = Buffer(delimiters)
         
-        b._data += b"testdata"
+        b._data += bytearray(b"testdata")
         bufferLength = len(b._data)
         readLength = bufferLength // 2
         
@@ -187,7 +187,7 @@ class Test_Buffer_ByteOperations:
     def test_pop_negativeBytes(self):
         delimiters = ["\r\n"]
         b = Buffer(delimiters)
-        testBytes = bytearray(b"testdata")
+        testBytes = bytearray(bytearray(b"testdata"))
         b._data += testBytes
 
         assert testBytes == b.pop(-1)
@@ -199,7 +199,7 @@ class Test_Buffer_ByteOperations:
         delimiters = ["\r\n"]
         b = Buffer(delimiters)
         
-        testBytes = bytearray(b"testdata")
+        testBytes = bytearray(bytearray(b"testdata"))
         b._data += testBytes
         bufferLength = len(b._data)
         
@@ -212,7 +212,7 @@ class Test_Buffer_ByteOperations:
         delimiters = ["\r\n"]
         b = Buffer(delimiters)
         
-        testBytes = bytearray(b"testdata")
+        testBytes = bytearray(bytearray(b"testdata"))
         b._data += testBytes
         bufferLength = len(b._data)
         popLength = 1
@@ -226,7 +226,7 @@ class Test_Buffer_ByteOperations:
         delimiters = ["\r\n"]
         b = Buffer(delimiters)
         
-        testBytes = bytearray(b"testdata")
+        testBytes = bytearray(bytearray(b"testdata"))
         b._data += testBytes
         bufferLength = len(testBytes)
         popLength = bufferLength // 2
@@ -313,7 +313,7 @@ class Test_Buffer_ByteOperations:
         b = Buffer(delimiters)
         b.execWriteHook = lambda *args, **kwargs: None
 
-        testBytes = b"testdata"
+        testBytes = bytearray(b"testdata")
         b.write(testBytes)
         
         assert len(b._data) == len(testBytes)
@@ -352,7 +352,7 @@ class Test_Buffer_ByteOperations:
         testBytes = b"data"
         b.write(testBytes)
 
-        assert b._data == bytearray(b"testdata")
+        assert b._data == bytearray(bytearray(b"testdata"))
         assert len(b._requests) == 0
 
 
@@ -369,10 +369,6 @@ class Test_Buffer_Hooks:
 
 
 class Test_Buffer_RequestQueueOperations:
-    ## pushToQueue()
-
-    ## popFromQueue()
-
     ## peakFromQueue()
     def test_peakFromQueue_empty(self):
         delimiters = ["\r\n"]
@@ -383,6 +379,8 @@ class Test_Buffer_RequestQueueOperations:
             b.peakFromQueue()
 
         assert "Cannot peak" in str(excInfo.value)
+        assert len(b._data) == 0
+        assert len(b._requests) == 0
 
 
     def test_peakFromQueue_singleUndelimited(self):
@@ -390,21 +388,24 @@ class Test_Buffer_RequestQueueOperations:
         b = Buffer(delimiters)
         b.execWriteHook = lambda *args, **kwargs: None
 
-        request = [b"testdata", False]
+        request = [bytearray(b"testdata"), False]
         b._requests.append(request)
 
         assert request == b.peakFromQueue()
-
+        assert len(b._data) == 0
+        assert len(b._requests) == 0
 
     def test_peakFromQueue_singleDelimited(self):
         delimiters = ["\r\n"]
         b = Buffer(delimiters)
         b.execWriteHook = lambda *args, **kwargs: None
 
-        request = [b"testdata", True]
+        request = [bytearray(b"testdata"), True]
         b._requests.append(request)
 
         assert request == b.peakFromQueue()
+        assert len(b._data) == 0
+        assert len(b._requests) == 0
 
 
     def test_peakFromQueue_manyUndelimited(self):
@@ -412,13 +413,15 @@ class Test_Buffer_RequestQueueOperations:
         b = Buffer(delimiters)
         b.execWriteHook = lambda *args, **kwargs: None
 
-        b._requests.append([b"testdata1", True])
-        b._requests.append([b"testdata2", True])
-        b._requests.append([b"testdata3", True])
-        request = [b"testdata", False]
+        b._requests.append([bytearray(b"testdata1"), True])
+        b._requests.append([bytearray(b"testdata2"), True])
+        b._requests.append([bytearray(b"testdata3"), True])
+        request = [bytearray(b"testdata"), False]
         b._requests.append(request)
 
         assert request == b.peakFromQueue()
+        assert len(b._data) == 0
+        assert len(b._requests) == 0
 
 
     def test_peakFromQueue_manyDelimited(self):
@@ -426,18 +429,196 @@ class Test_Buffer_RequestQueueOperations:
         b = Buffer(delimiters)
         b.execWriteHook = lambda *args, **kwargs: None
 
-        b._requests.append([b"testdata1", True])
-        b._requests.append([b"testdata2", True])
-        b._requests.append([b"testdata3", True])
-        request = [b"testdata", True]
+        b._requests.append([bytearray(b"testdata1"), True])
+        b._requests.append([bytearray(b"testdata2"), True])
+        b._requests.append([bytearray(b"testdata3"), True])
+        request = [bytearray(b"testdata"), True]
         b._requests.append(request)
 
         assert request == b.peakFromQueue()
+        assert len(b._data) == 0
+        assert len(b._requests) == 0
 
-    ## peak empty queue
-    ## peak single queue
-    ## peak multiple queue
 
+    ## pushToQueue()
+    def test_pushToQueue_empty_Undelimited(self):
+        delimiters = ["\r\n"]
+        b = Buffer(delimiters)
+        b.execWriteHook = lambda *args, **kwargs: None
+
+        request = [bytearray(b"testdata"), False]
+        b.pushToQueue(*request)
+
+        assert len(b._requests) == 1
+        assert b._requests[-1] == request
+        assert len(b._data) == 0
+
+
+    def test_pushToQueue_empty_Delimited(self):
+        delimiters = ["\r\n"]
+        b = Buffer(delimiters)
+        b.execWriteHook = lambda *args, **kwargs: None
+
+        request = [bytearray(b"testdata"), True]
+        b.pushToQueue(*request)
+
+        assert len(b._requests) == 1
+        assert b._requests[-1] == request
+        assert len(b._data) == 0
+
+
+    def test_pushToQueue_single_PrevUndelimited_CurrentDelimited(self):
+        delimiters = ["\r\n"]
+        b = Buffer(delimiters)
+        b.execWriteHook = lambda *args, **kwargs: None
+
+        request1 = [bytearray(b"testdata1"), False]
+        request2 = [bytearray(b"testdata2"), True]
+        b.pushToQueue(*request1)
+        b.pushToQueue(*request2)
+
+        assert len(b._requests) == 1
+        assert b._requests[-1][0] == request1[0] + request2[0]
+        assert b._requests[-1][1] == True
+
+
+    def test_pushToQueue_single_PrevUndelimited_CurrentUndelimited(self):
+        delimiters = ["\r\n"]
+        b = Buffer(delimiters)
+        b.execWriteHook = lambda *args, **kwargs: None
+
+        request1 = [bytearray(b"testdata1"), False]
+        request2 = [bytearray(b"testdata2"), False]
+        b.pushToQueue(*request1)
+        b.pushToQueue(*request2)
+
+        assert len(b._requests) == 1
+        assert b._requests[-1][0] == request1[0] + request2[0]
+        assert b._requests[-1][1] == False
+
+
+    def test_pushToQueue_single_PrevDelimited_currentUndelimited(self):
+        delimiters = ["\r\n"]
+        b = Buffer(delimiters)
+        b.execWriteHook = lambda *args, **kwargs: None
+
+        request1 = [bytearray(b"testdata1"), True]
+        request2 = [bytearray(b"testdata2"), False]
+        b.pushToQueue(*request1)
+        b.pushToQueue(*request2)
+
+        assert len(b._requests) == 2
+        assert b._requests[0] == request1
+        assert b._requests[1] == request2
+        assert len(b._data) == 0
+
+
+    def test_pushToQueue_single_PrevDelimited_currentDelimited(self):
+        delimiters = ["\r\n"]
+        b = Buffer(delimiters)
+        b.execWriteHook = lambda *args, **kwargs: None
+
+        request1 = [bytearray(b"testdata1"), True]
+        request2 = [bytearray(b"testdata2"), True]
+        b.pushToQueue(*request1)
+        b.pushToQueue(*request2)
+
+        assert len(b._requests) == 2
+        assert b._requests[0] == request1
+        assert b._requests[1] == request2
+        assert len(b._data) == 0
+
+
+    def test_pushToQueue_many_prevDelimited_currentDelimited(self):
+        delimiters = ["\r\n"]
+        b = Buffer(delimiters)
+        b.execWriteHook = lambda *args, **kwargs: None
+
+        request1 = [bytearray(b"testdata1"), True]
+        request2 = [bytearray(b"testdata2"), True]
+        request3 = [bytearray(b"testdata3"), True]
+        request4 = [bytearray(b"testdata4"), True]
+        b.pushToQueue(*request1)
+        b.pushToQueue(*request2)
+        b.pushToQueue(*request3)
+        b.pushToQueue(*request4)
+
+        assert len(b._requests) == 4
+        assert b._requests[0] == request1
+        assert b._requests[1] == request2
+        assert b._requests[2] == request3
+        assert b._requests[3] == request4
+        assert len(b._data) == 0
+
+    def test_pushToQueue_many_prevDelimited_currentUndelimited(self):
+        delimiters = ["\r\n"]
+        b = Buffer(delimiters)
+        b.execWriteHook = lambda *args, **kwargs: None
+
+        request1 = [bytearray(b"testdata1"), True]
+        request2 = [bytearray(b"testdata2"), True]
+        request3 = [bytearray(b"testdata3"), True]
+        request4 = [bytearray(b"testdata4"), False]
+        b.pushToQueue(*request1)
+        b.pushToQueue(*request2)
+        b.pushToQueue(*request3)
+        b.pushToQueue(*request4)
+
+        assert len(b._requests) == 4
+        assert b._requests[0] == request1
+        assert b._requests[1] == request2
+        assert b._requests[2] == request3
+        assert b._requests[3] == request4
+        assert len(b._data) == 0
+
+
+    def test_pushToQueue_many_prevUndelimited_currentUndelimited(self):
+        delimiters = ["\r\n"]
+        b = Buffer(delimiters)
+        b.execWriteHook = lambda *args, **kwargs: None
+
+        request1 = [bytearray(b"testdata1"), True]
+        request2 = [bytearray(b"testdata2"), True]
+        request3 = [bytearray(b"testdata3"), False]
+        request4 = [bytearray(b"testdata4"), False]
+        b.pushToQueue(*request1)
+        b.pushToQueue(*request2)
+        b.pushToQueue(*request3)
+        b.pushToQueue(*request4)
+
+        assert len(b._requests) == 3
+        assert b._requests[0] == request1
+        assert b._requests[1] == request2
+        assert b._requests[2] == [request3[0] + request4[0], False]
+        assert len(b._data) == 0
+
+    def test_pushToQueue_many_prevUndelimited_currentDelimited(self):
+        delimiters = ["\r\n"]
+        b = Buffer(delimiters)
+        b.execWriteHook = lambda *args, **kwargs: None
+
+        request1 = [bytearray(b"testdata1"), True]
+        request2 = [bytearray(b"testdata2"), True]
+        request3 = [bytearray(b"testdata3"), False]
+        request4 = [bytearray(b"testdata4"), True]
+        b.pushToQueue(*request1)
+        b.pushToQueue(*request2)
+        b.pushToQueue(*request3)
+        b.pushToQueue(*request4)
+
+        assert len(b._requests) == 3
+        assert b._requests[0] == request1
+        assert b._requests[1] == request2
+        assert b._requests[2] == [request3[0] + request4[0], True]
+        assert len(b._data) == 0
+    
+    
+    ## emptyQueue
+    ## singleQueue (prevDelimited)
+    ## singleQueue (prevUndelimited)
+    
+
+    ## popFromQueue()
 
 
 
