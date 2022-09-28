@@ -358,8 +358,86 @@ class Test_Buffer_ByteOperations:
 
 
     
-    
 class Test_Buffer_Hooks:
+    ## TODO:
     ## execWriteHook()
     ## setHook()
+    ## _requestHook()
+    ## _writeHook()
     ...
+
+
+
+class Test_Buffer_RequestQueueOperations:
+    ## pushToQueue()
+
+    ## popFromQueue()
+
+    ## peakFromQueue()
+    def test_peakFromQueue_empty(self):
+        delimiters = ["\r\n"]
+        b = Buffer(delimiters)
+        b.execWriteHook = lambda *args, **kwargs: None
+
+        with pytest.raises(IndexError) as excInfo:
+            b.peakFromQueue()
+
+        assert "Cannot peak" in str(excInfo.value)
+
+
+    def test_peakFromQueue_singleUndelimited(self):
+        delimiters = ["\r\n"]
+        b = Buffer(delimiters)
+        b.execWriteHook = lambda *args, **kwargs: None
+
+        request = [b"testdata", False]
+        b._requests.append(request)
+
+        assert request == b.peakFromQueue()
+
+
+    def test_peakFromQueue_singleDelimited(self):
+        delimiters = ["\r\n"]
+        b = Buffer(delimiters)
+        b.execWriteHook = lambda *args, **kwargs: None
+
+        request = [b"testdata", True]
+        b._requests.append(request)
+
+        assert request == b.peakFromQueue()
+
+
+    def test_peakFromQueue_manyUndelimited(self):
+        delimiters = ["\r\n"]
+        b = Buffer(delimiters)
+        b.execWriteHook = lambda *args, **kwargs: None
+
+        b._requests.append([b"testdata1", True])
+        b._requests.append([b"testdata2", True])
+        b._requests.append([b"testdata3", True])
+        request = [b"testdata", False]
+        b._requests.append(request)
+
+        assert request == b.peakFromQueue()
+
+
+    def test_peakFromQueue_manyDelimited(self):
+        delimiters = ["\r\n"]
+        b = Buffer(delimiters)
+        b.execWriteHook = lambda *args, **kwargs: None
+
+        b._requests.append([b"testdata1", True])
+        b._requests.append([b"testdata2", True])
+        b._requests.append([b"testdata3", True])
+        request = [b"testdata", True]
+        b._requests.append(request)
+
+        assert request == b.peakFromQueue()
+
+    ## peak empty queue
+    ## peak single queue
+    ## peak multiple queue
+
+
+
+
