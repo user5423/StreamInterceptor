@@ -393,7 +393,7 @@ class Test_Buffer_RequestQueueOperations:
 
         assert request == b.peakFromQueue()
         assert len(b._data) == 0
-        assert len(b._requests) == 0
+        assert len(b._requests) == 1
 
     def test_peakFromQueue_singleDelimited(self):
         delimiters = ["\r\n"]
@@ -405,7 +405,7 @@ class Test_Buffer_RequestQueueOperations:
 
         assert request == b.peakFromQueue()
         assert len(b._data) == 0
-        assert len(b._requests) == 0
+        assert len(b._requests) == 1
 
 
     def test_peakFromQueue_manyUndelimited(self):
@@ -421,7 +421,7 @@ class Test_Buffer_RequestQueueOperations:
 
         assert request == b.peakFromQueue()
         assert len(b._data) == 0
-        assert len(b._requests) == 0
+        assert len(b._requests) == 4
 
 
     def test_peakFromQueue_manyDelimited(self):
@@ -437,7 +437,7 @@ class Test_Buffer_RequestQueueOperations:
 
         assert request == b.peakFromQueue()
         assert len(b._data) == 0
-        assert len(b._requests) == 0
+        assert len(b._requests) == 4
 
 
     ## pushToQueue()
