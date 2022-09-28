@@ -612,13 +612,101 @@ class Test_Buffer_RequestQueueOperations:
         assert b._requests[2] == [request3[0] + request4[0], True]
         assert len(b._data) == 0
     
-    
-    ## emptyQueue
-    ## singleQueue (prevDelimited)
-    ## singleQueue (prevUndelimited)
-    
 
     ## popFromQueue()
+    def test_popFromQueue_empty(self):
+        delimiters = ["\r\n"]
+        b = Buffer(delimiters)
+        b.execWriteHook = lambda *args, **kwargs: None
+
+        with pytest.raises(IndexError) as excInfo:
+            b.popFromQueue()
+
+        assert "Cannot pop" in str(excInfo.value)
+        assert "empty" in str(excInfo.value)
+        assert len(b._requests) == 0
+
+
+    def test_popFromQueue_single_Undelimited(self):
+        delimiters = ["\r\n"]
+        b = Buffer(delimiters)
+        b.execWriteHook = lambda *args, **kwargs: None
+
+        request = [bytearray(b"testdata"), False]
+        b.pushToQueue(*request)
+
+        with pytest.raises(ValueError) as excInfo:
+            b.popFromQueue()
+
+        assert "Cannot pop" in str(excInfo.value)
+        assert "undelimited" in str(excInfo.value)
+        assert len(b._requests) == 1
+
+
+    def test_popFromQueue_single_Delimited(self):
+        delimiters = ["\r\n"]
+        b = Buffer(delimiters)
+        b.execWriteHook = lambda *args, **kwargs: None
+        
+        request = [bytearray(b"testdata"), True]
+        b.pushToQueue(*request)
+
+        assert b.popFromQueue() == request
+        assert len(b._requests) == 0
+
+
+    def test_popFromQueue_many_Undelimited(self):
+        delimiters = ["\r\n"]
+        b = Buffer(delimiters)
+        b.execWriteHook = lambda *args, **kwargs: None
+        
+        request1 = [bytearray(b"testdata1"), True]
+        request2 = [bytearray(b"testdata2"), True]
+        request3 = [bytearray(b"testdata3"), True]
+        request4 = [bytearray(b"testdata4"), False]
+        b.pushToQueue(*request1)
+        b.pushToQueue(*request2)
+        b.pushToQueue(*request3)
+        b.pushToQueue(*request4)
+
+        assert b.popFromQueue() == request1
+        assert b.popFromQueue() == request2
+        assert b.popFromQueue() == request3
+
+        with pytest.raises(ValueError) as excInfo:
+            b.popFromQueue()
+
+        assert "Cannot pop" in str(excInfo.value)
+        assert "undelimited" in str(excInfo.value)
+        assert len(b._requests) == 1
+
+
+    def test_popFromQueue_many_Delimited(self):
+        delimiters = ["\r\n"]
+        b = Buffer(delimiters)
+        b.execWriteHook = lambda *args, **kwargs: None
+        
+        request1 = [bytearray(b"testdata1"), True]
+        request2 = [bytearray(b"testdata2"), True]
+        request3 = [bytearray(b"testdata3"), True]
+        request4 = [bytearray(b"testdata4"), True]
+        b.pushToQueue(*request1)
+        b.pushToQueue(*request2)
+        b.pushToQueue(*request3)
+        b.pushToQueue(*request4)
+
+        assert b.popFromQueue() == request1
+        assert b.popFromQueue() == request2
+        assert b.popFromQueue() == request3
+        assert b.popFromQueue() == request4
+
+        assert len(b._requests) == 0
+
+    ## emptyQueue
+    ## singleQueue (undelimited vs delimited)
+    ## multiQueue (undelimited vs delimited)
+
+
 
 
 
