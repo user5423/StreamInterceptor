@@ -1124,6 +1124,183 @@ class Test_Buffer_Hooks:
 
 
     ## Additional tests for delimiter spreading
+    def test_defaultWriteHook_TwoChunk_OneSpreadDelimiterCompleteRequest(self):
+        delimiters = [b"\r\n"]
+        delimiter = delimiters[0]
+        b = Buffer(delimiters)
+
+        testBytes1 = bytearray(b"completeReq")
+        testBytes2 = bytearray(b"\r\n")
+        
+        queue = collections.deque([])
+        def requestHook(self, request):
+            nonlocal queue
+            queue.appendleft(request)
+
+        b._requestHook = functools.partial(requestHook, b)
+        b.write(testBytes1)
+        b.write(testBytes2)
+
+        ## Data should be removed buffer()._data once popped from buffer()._requests
+        assert b._data == bytearray(b"")
+        assert len(b._requests) == 0
+        
+        assert len(queue) == 1
+        assert queue.pop() == bytearray(b"completeReq\r\n")
+
+
+    def test_defaultWriteHook_TwoChunk_OneSplitDelimiterCompleteRequest_SizeTwoDelimiter(self):
+        delimiters = [b"\r\n"]
+        delimiter = delimiters[0]
+        b = Buffer(delimiters)
+
+        testBytes1 = bytearray(b"completeReq\r")
+        testBytes2 = bytearray(b"\n")
+        
+        queue = collections.deque([])
+        def requestHook(self, request):
+            nonlocal queue
+            queue.appendleft(request)
+
+        b._requestHook = functools.partial(requestHook, b)
+        b.write(testBytes1)
+        b.write(testBytes2)
+
+        ## Data should be removed buffer()._data once popped from buffer()._requests
+        assert b._data == bytearray(b"")
+        assert len(b._requests) == 0
+        
+        assert len(queue) == 1
+        assert queue.pop() == bytearray(b"completeReq\r\n")
+
+
+    def test_defaultWriteHook_TwoChunk_OneSplitDelimiterCompleteRequest_OnePartialRequest_SizeTwoDelimiter(self):
+        delimiters = [b"\r\n"]
+        delimiter = delimiters[0]
+        b = Buffer(delimiters)
+
+        testBytes1 = bytearray(b"completeReq\r")
+        testBytes2 = bytearray(b"\nincompleteR")
+        
+        queue = collections.deque([])
+        def requestHook(self, request):
+            nonlocal queue
+            queue.appendleft(request)
+
+        b._requestHook = functools.partial(requestHook, b)
+        b.write(testBytes1)
+        b.write(testBytes2)
+
+        ## Data should be removed buffer()._data once popped from buffer()._requests
+        assert b._data == bytearray(b"incompleteR")
+        assert len(b._requests) == 1
+        assert b._requests[-1] == [bytearray(b"incompleteR"), False]
+        
+        assert len(queue) == 1
+        assert queue.pop() == bytearray(b"completeReq\r\n")
+
+
+    def test_defaultWriteHook_TwoChunk_OneSplitDelimiterCompleteRequest_OneCompleteRequest_SizeTwoDelimiter(self):
+        delimiters = [b"\r\n"]
+        delimiter = delimiters[0]
+        b = Buffer(delimiters)
+
+        testBytes1 = bytearray(b"completeReq1\r")
+        testBytes2 = bytearray(b"\ncompleteReq2\r\n")
+        
+        queue = collections.deque([])
+        def requestHook(self, request):
+            nonlocal queue
+            queue.appendleft(request)
+
+        b._requestHook = functools.partial(requestHook, b)
+        b.write(testBytes1)
+        b.write(testBytes2)
+
+        ## Data should be removed buffer()._data once popped from buffer()._requests
+        assert b._data == bytearray(b"")
+        assert len(b._requests) == 0
+        
+        assert len(queue) == 1
+        assert queue.pop() == bytearray(b"completeReq1\r\n")
+        assert queue.pop() == bytearray(b"completeReq2\r\n")
+
+
+    def test_defaultWriteHook_TwoChunk_OneSplitDelimiterCompleteRequest_SizeFourDelimiter_Option1(self):
+        delimiters = [b"\r\n\r\n"]
+        delimiter = delimiters[0]
+        b = Buffer(delimiters)
+
+        testBytes1 = bytearray(b"completeReq\r")
+        testBytes2 = bytearray(b"\n\r\n")
+        
+        queue = collections.deque([])
+        def requestHook(self, request):
+            nonlocal queue
+            queue.appendleft(request)
+
+        b._requestHook = functools.partial(requestHook, b)
+        b.write(testBytes1)
+        b.write(testBytes2)
+
+        ## Data should be removed buffer()._data once popped from buffer()._requests
+        assert b._data == bytearray(b"")
+        assert len(b._requests) == 0
+        
+        assert len(queue) == 1
+        assert queue.pop() == bytearray(b"completeReq\r\n\r\n")
+
+    def test_defaultWriteHook_TwoChunk_OneSplitDelimiterCompleteRequest_SizeFourDelimiter_Option2(self):
+        delimiters = [b"\r\n\r\n"]
+        delimiter = delimiters[0]
+        b = Buffer(delimiters)
+
+        testBytes1 = bytearray(b"completeReq\r\n")
+        testBytes2 = bytearray(b"\r\n")
+        
+        queue = collections.deque([])
+        def requestHook(self, request):
+            nonlocal queue
+            queue.appendleft(request)
+
+        b._requestHook = functools.partial(requestHook, b)
+        b.write(testBytes1)
+        b.write(testBytes2)
+
+        ## Data should be removed buffer()._data once popped from buffer()._requests
+        assert b._data == bytearray(b"")
+        assert len(b._requests) == 0
+        
+        assert len(queue) == 1
+        assert queue.pop() == bytearray(b"completeReq\r\n\r\n")
+
+
+    def test_defaultWriteHook_TwoChunk_OneSplitDelimiterCompleteRequest_SizeFourDelimiter_Option3(self):
+        delimiters = [b"\r\n\r\n"]
+        delimiter = delimiters[0]
+        b = Buffer(delimiters)
+
+        testBytes1 = bytearray(b"completeReq\r\n\r")
+        testBytes2 = bytearray(b"\n")
+        
+        queue = collections.deque([])
+        def requestHook(self, request):
+            nonlocal queue
+            queue.appendleft(request)
+
+        b._requestHook = functools.partial(requestHook, b)
+        b.write(testBytes1)
+        b.write(testBytes2)
+
+        ## Data should be removed buffer()._data once popped from buffer()._requests
+        assert b._data == bytearray(b"")
+        assert len(b._requests) == 0
+        
+        assert len(queue) == 1
+        assert queue.pop() == bytearray(b"completeReq\r\n\r\n")
+
+
+    ## TODO: Consider restructuring delimiter chunk-split tests
 
     
 
