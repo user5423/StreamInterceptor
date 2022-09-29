@@ -37,7 +37,7 @@ class Test_Buffer_Init:
         
 
     def test_RequestDelimiters_single(self) -> None:
-        REQUEST_DELIMITERS = ["\r\n"]
+        REQUEST_DELIMITERS = [b"\r\n"]
         b = Buffer(REQUEST_DELIMITERS)
         
         assert b.REQUEST_DELIMITERS == REQUEST_DELIMITERS
@@ -47,7 +47,7 @@ class Test_Buffer_Init:
         
     def test_RequestDelimiters_many(self) -> None:
         ## NOTE: The order of the delimiters is important for when message can have multiple potential delimiters
-        REQUEST_DELIMITERS = ["\r\n", "\r"]
+        REQUEST_DELIMITERS = [b"\r\n", b"\r"]
         b = Buffer(REQUEST_DELIMITERS)
         
         assert b.REQUEST_DELIMITERS == REQUEST_DELIMITERS
@@ -57,7 +57,7 @@ class Test_Buffer_Init:
         
     def test_RequestDelimiters_duplicate(self) -> None:
         ## NOTE: Duplicates delimitesr are bad practice
-        REQUEST_DELIMITERS = ["\r\n", "\r", "\r\n"]
+        REQUEST_DELIMITERS = [b"\r\n", b"\r", b"\r\n"]
         with pytest.raises(ValueError) as excInfo:
             Buffer(REQUEST_DELIMITERS)
         
@@ -76,7 +76,7 @@ class Test_Buffer_ByteOperations:
     ## NOTE: These tests are in the scenario where the number of desired bytes
     ## to be read is LESS than the number of current bytes stored in the buffer
     def test_read_negativeBytes(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         
         b._data += bytearray(b"testdata")
@@ -88,7 +88,7 @@ class Test_Buffer_ByteOperations:
 
         
     def test_read_zeroBytes(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         
         b._data += bytearray(b"testdata")
@@ -100,7 +100,7 @@ class Test_Buffer_ByteOperations:
 
         
     def test_read_oneByte(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         
         b._data += bytearray(b"testdata")
@@ -112,7 +112,7 @@ class Test_Buffer_ByteOperations:
         
         
     def test_read_manyBytes(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         
         b._data += bytearray(b"testdata")
@@ -127,7 +127,7 @@ class Test_Buffer_ByteOperations:
     ## NOTE: These tests are in the scenario where the number of desired bytes
     ## to be read EXCEEDS the number of current bytes stored in the buffer
     def test_read_negativeBytes_zeroBuffer(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         
         # b._data is initialized as empty bytearray()
@@ -138,7 +138,7 @@ class Test_Buffer_ByteOperations:
         assert len(b._requests) == 0
         
     def test_read_zeroBytes_zeroBuffer(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         
         # b._data is initialized as empty bytearray()
@@ -149,7 +149,7 @@ class Test_Buffer_ByteOperations:
         assert len(b._requests) == 0
         
     def test_read_oneByte_zeroBuffer(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         
         # b._data is initialized as empty bytearray()
@@ -161,7 +161,7 @@ class Test_Buffer_ByteOperations:
         
         
     def test_read_manyBytes_oneBuffer(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         
         b._data += b"t"
@@ -183,7 +183,7 @@ class Test_Buffer_ByteOperations:
     ## NOTE: These tests are in the scenario where the number of desired bytes
     ## to be read is LESS than the number of current bytes stored in the buffer
     def test_pop_negativeBytes(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         testBytes = bytearray(bytearray(b"testdata"))
         b._data += testBytes
@@ -194,7 +194,7 @@ class Test_Buffer_ByteOperations:
 
         
     def test_pop_zeroBytes(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         
         testBytes = bytearray(bytearray(b"testdata"))
@@ -207,7 +207,7 @@ class Test_Buffer_ByteOperations:
 
         
     def test_pop_oneByte(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         
         testBytes = bytearray(bytearray(b"testdata"))
@@ -221,7 +221,7 @@ class Test_Buffer_ByteOperations:
         
         
     def test_pop_manyBytes(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         
         testBytes = bytearray(bytearray(b"testdata"))
@@ -237,7 +237,7 @@ class Test_Buffer_ByteOperations:
     ## NOTE: These tests are in the scenario where the number of desired bytes
     ## to be pop EXCEEDS the number of current bytes stored in the buffer
     def test_pop_negativeBytes_zeroBuffer(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         
         # b._data is initialized as empty bytearray()
@@ -247,7 +247,7 @@ class Test_Buffer_ByteOperations:
         assert len(b._requests) == 0
         
     def test_pop_zeroBytes_zeroBuffer(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         
         # b._data is initialized as empty bytearray()
@@ -257,7 +257,7 @@ class Test_Buffer_ByteOperations:
         assert len(b._requests) == 0
         
     def test_pop_oneByte_zeroBuffer(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         
         # b._data is initialized as empty bytearray()
@@ -268,7 +268,7 @@ class Test_Buffer_ByteOperations:
         
         
     def test_pop_manyBytes_oneBuffer(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
 
         testBytes = b"t"
@@ -285,7 +285,7 @@ class Test_Buffer_ByteOperations:
     ## write() tests
     
     def test_write_zeroBytes(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         b.execWriteHook = lambda *args, **kwargs: None
 
@@ -296,7 +296,7 @@ class Test_Buffer_ByteOperations:
         assert len(b._requests) == 0
         
     def test_write_oneByte(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         b.execWriteHook = lambda *args, **kwargs: None
 
@@ -307,7 +307,7 @@ class Test_Buffer_ByteOperations:
         assert len(b._requests) == 0
         
     def test_write_manyBytes(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         b.execWriteHook = lambda *args, **kwargs: None
 
@@ -318,7 +318,7 @@ class Test_Buffer_ByteOperations:
         assert len(b._requests) == 0
 
     def test_write_zeroBytes_nonEmptyBuffer(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         b.execWriteHook = lambda *args, **kwargs: None
 
@@ -330,7 +330,7 @@ class Test_Buffer_ByteOperations:
         assert len(b._requests) == 0
 
     def test_write_oneByte_nonEmptyBuffer(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         b.execWriteHook = lambda *args, **kwargs: None
 
@@ -342,7 +342,7 @@ class Test_Buffer_ByteOperations:
         assert len(b._requests) == 0
 
     def test_write_manyBytes_nonEmptyBuffer(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         b.execWriteHook = lambda *args, **kwargs: None
 
@@ -358,7 +358,7 @@ class Test_Buffer_ByteOperations:
 class Test_Buffer_RequestQueueOperations:
     ## peakFromQueue()
     def test_peakFromQueue_empty(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         b.execWriteHook = lambda *args, **kwargs: None
 
@@ -371,7 +371,7 @@ class Test_Buffer_RequestQueueOperations:
 
 
     def test_peakFromQueue_singleUndelimited(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         b.execWriteHook = lambda *args, **kwargs: None
 
@@ -383,7 +383,7 @@ class Test_Buffer_RequestQueueOperations:
         assert len(b._requests) == 1
 
     def test_peakFromQueue_singleDelimited(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         b.execWriteHook = lambda *args, **kwargs: None
 
@@ -396,7 +396,7 @@ class Test_Buffer_RequestQueueOperations:
 
 
     def test_peakFromQueue_manyUndelimited(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         b.execWriteHook = lambda *args, **kwargs: None
 
@@ -412,7 +412,7 @@ class Test_Buffer_RequestQueueOperations:
 
 
     def test_peakFromQueue_manyDelimited(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         b.execWriteHook = lambda *args, **kwargs: None
 
@@ -429,7 +429,7 @@ class Test_Buffer_RequestQueueOperations:
 
     ## pushToQueue()
     def test_pushToQueue_empty_Undelimited(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         b.execWriteHook = lambda *args, **kwargs: None
 
@@ -442,7 +442,7 @@ class Test_Buffer_RequestQueueOperations:
 
 
     def test_pushToQueue_empty_Delimited(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         b.execWriteHook = lambda *args, **kwargs: None
 
@@ -455,7 +455,7 @@ class Test_Buffer_RequestQueueOperations:
 
 
     def test_pushToQueue_single_PrevUndelimited_CurrentDelimited(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         b.execWriteHook = lambda *args, **kwargs: None
 
@@ -470,7 +470,7 @@ class Test_Buffer_RequestQueueOperations:
 
 
     def test_pushToQueue_single_PrevUndelimited_CurrentUndelimited(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         b.execWriteHook = lambda *args, **kwargs: None
 
@@ -485,7 +485,7 @@ class Test_Buffer_RequestQueueOperations:
 
 
     def test_pushToQueue_single_PrevDelimited_currentUndelimited(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         b.execWriteHook = lambda *args, **kwargs: None
 
@@ -501,7 +501,7 @@ class Test_Buffer_RequestQueueOperations:
 
 
     def test_pushToQueue_single_PrevDelimited_currentDelimited(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         b.execWriteHook = lambda *args, **kwargs: None
 
@@ -517,7 +517,7 @@ class Test_Buffer_RequestQueueOperations:
 
 
     def test_pushToQueue_many_prevDelimited_currentDelimited(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         b.execWriteHook = lambda *args, **kwargs: None
 
@@ -538,7 +538,7 @@ class Test_Buffer_RequestQueueOperations:
         assert len(b._data) == 0
 
     def test_pushToQueue_many_prevDelimited_currentUndelimited(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         b.execWriteHook = lambda *args, **kwargs: None
 
@@ -560,7 +560,7 @@ class Test_Buffer_RequestQueueOperations:
 
 
     def test_pushToQueue_many_prevUndelimited_currentUndelimited(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         b.execWriteHook = lambda *args, **kwargs: None
 
@@ -580,7 +580,7 @@ class Test_Buffer_RequestQueueOperations:
         assert len(b._data) == 0
 
     def test_pushToQueue_many_prevUndelimited_currentDelimited(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         b.execWriteHook = lambda *args, **kwargs: None
 
@@ -602,7 +602,7 @@ class Test_Buffer_RequestQueueOperations:
 
     ## popFromQueue()
     def test_popFromQueue_empty(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         b.execWriteHook = lambda *args, **kwargs: None
 
@@ -615,7 +615,7 @@ class Test_Buffer_RequestQueueOperations:
 
 
     def test_popFromQueue_single_Undelimited(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         b.execWriteHook = lambda *args, **kwargs: None
 
@@ -631,7 +631,7 @@ class Test_Buffer_RequestQueueOperations:
 
 
     def test_popFromQueue_single_Delimited(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         b.execWriteHook = lambda *args, **kwargs: None
         
@@ -643,7 +643,7 @@ class Test_Buffer_RequestQueueOperations:
 
 
     def test_popFromQueue_many_Undelimited(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         b.execWriteHook = lambda *args, **kwargs: None
         
@@ -669,7 +669,7 @@ class Test_Buffer_RequestQueueOperations:
 
 
     def test_popFromQueue_many_Delimited(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         b.execWriteHook = lambda *args, **kwargs: None
         
@@ -703,7 +703,7 @@ class Test_Buffer_Hooks:
     ## _writeHook()
 
     def test_hookSettingAndCalling(self):
-        delimiters = ["\r\n"]
+        delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         testBytes = bytearray(b"test")
         
