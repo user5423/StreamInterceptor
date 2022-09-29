@@ -1,9 +1,7 @@
-from argparse import ArgumentError
 import collections
-from multiprocessing.sharedctypes import Value
 import os
 import sys
-
+import functools
 import pytest
 
 sys.path.insert(0, os.path.join("..", "src"))
@@ -357,17 +355,6 @@ class Test_Buffer_ByteOperations:
 
 
 
-    
-class Test_Buffer_Hooks:
-    ## TODO:
-    ## execWriteHook()
-    ## setHook()
-    ## _requestHook()
-    ## _writeHook()
-    ...
-
-
-
 class Test_Buffer_RequestQueueOperations:
     ## peakFromQueue()
     def test_peakFromQueue_empty(self):
@@ -708,5 +695,365 @@ class Test_Buffer_RequestQueueOperations:
 
 
 
+class Test_Buffer_Hooks:
+    ## TODO:
+    ## execWriteHook()
+    ## setHook()
+    ## _requestHook()
+    ## _writeHook()
 
+    def test_hookSettingAndCalling(self):
+        delimiters = ["\r\n"]
+        b = Buffer(delimiters)
+        testBytes = bytearray(b"test")
+        
+        isRan = False
+        def func(buffer, chunk):
+            nonlocal isRan
+            isRan = True
+        
+        b.setHook(func)
+        b._writeHook(testBytes)
+        assert isRan == True
+
+
+        isRan = False
+        b.execWriteHook(testBytes)
+        assert isRan == True
+
+    def test_defaultWriteHook(self):
+        raise NotImplementedError()
+
+    ## TODO: Test if write() method calls hook
+
+    ## TODO: Write methods for Buffer()._requestHook
+
+    ## Scenarios
+    
+
+    ## starts
+    ## - req starts on first byte of chunk
+    ## - req starts on a middle byte of chunk
+    ## - req starts on the end byte of chunk (should defer to next chunk)
+
+
+    ## ends
+    ## - delimiter (size 1) ends on last byte of chunk
+    ## - delimiter (size 1) ends on first byte of chunk
+    ## - delimiter (size 1) ends on middle byte of chunk
+
+    ## - delimiter (size > 1) ends over two or more chunks
+    ## - delimiter (size > 1) ends on last byte of chunk
+    ## - delimiter (size > 1) ends on first bytes of chunk
+    ## - delimiter (size > 1) ends on middle bytes of chunk
+
+    ## chunks iterated
+    ## - req is contained inside a single chunk
+    ## - req is spread out over two chunks
+    ## - req is spread out over many chunks
+
+    
+
+    ## Single Chunks (> 1 requests)
+    def test_defaultWriteHook_SingleChunk_OnePartialRequest(self):
+        delimiters = [b"\r\n"]
+        delimiter = delimiters[0]
+        b = Buffer(delimiters)
+        testBytes = bytearray(b"incompleteR")
+        
+        queue = collections.deque([])
+        def requestHook(self, request):
+            nonlocal queue
+            queue.appendleft(request)
+
+
+        b._requestHook = functools.partial(requestHook, b)
+        b.write(testBytes)
+
+        assert b._data == testBytes
+        assert len(b._requests) == 1
+        assert b._requests[-1] == testBytes
+        
+        assert len(queue) == 0
+
+
+    def test_defaultWriteHook_SingleChunk_OneCompleteRequest(self):
+        delimiters = [b"\r\n"]
+        delimiter = delimiters[0]
+        b = Buffer(delimiters)
+        testBytes = bytearray(b"completeReq\r\n")
+        
+        queue = collections.deque([])
+        def requestHook(self, request):
+            nonlocal queue
+            queue.appendleft(request)
+
+
+        b._requestHook = functools.partial(requestHook, b)
+        b.write(testBytes)
+
+        assert b._data == bytearray("")
+        assert len(b._requests) == 0
+        
+        assert len(queue) == 1
+        assert queue.pop() == testBytes
+
+
+    def test_defaultWriteHook_SingleChunk_OneCompleteRequest_OnePartialRequest(self):
+        delimiters = [b"\r\n"]
+        delimiter = delimiters[0]
+        b = Buffer(delimiters)
+
+        testBytes1 = bytearray(b"completeReq1\r\n")
+        testBytes2 = bytearray(b"incompleteR")
+        
+        queue = collections.deque([])
+        def requestHook(self, request):
+            nonlocal queue
+            queue.appendleft(request)
+
+
+        b._requestHook = functools.partial(requestHook, b)
+        b.write(testBytes1)
+        b.write(testBytes2)
+
+        ## Data should be removed buffer()._data once popped from buffer()._requests
+        assert b._data == testBytes2
+        assert len(b._requests) == 1
+        assert b._requests[-1] == testBytes2
+        
+        assert len(queue) == 1
+        assert queue.pop() == testBytes1
+
+
+    def test_defaultWriteHook_SingleChunk_TwoCompleteRequest(self):
+        delimiters = [b"\r\n"]
+        delimiter = delimiters[0]
+        b = Buffer(delimiters)
+
+        testBytes1 = bytearray(b"completeReq1\r\n")
+        testBytes2 = bytearray(b"completeReq2\r\n")
+        
+        queue = collections.deque([])
+        def requestHook(self, request):
+            nonlocal queue
+            queue.appendleft(request)
+
+
+        b._requestHook = functools.partial(requestHook, b)
+        b.write(testBytes1)
+        b.write(testBytes2)
+
+        ## Data should be removed buffer()._data once popped from buffer()._requests
+        assert b._data == bytearray("")
+        assert len(b._requests) == 0
+        
+        assert len(queue) == 2
+        assert queue.pop() == testBytes1
+        assert queue.pop() == testBytes2
+
+
+    def test_defaultWriteHook_SingleChunk_TwoCompleteRequest_OnePartialRequest(self):
+        delimiters = [b"\r\n"]
+        delimiter = delimiters[0]
+        b = Buffer(delimiters)
+
+        testBytes1 = bytearray(b"completeReq1\r\n")
+        testBytes2 = bytearray(b"completeReq2\r\n")
+        testBytes3 = bytearray(b"incompleteR")
+        
+        queue = collections.deque([])
+        def requestHook(self, request):
+            nonlocal queue
+            queue.appendleft(request)
+
+
+        b._requestHook = functools.partial(requestHook, b)
+        b.write(testBytes1)
+        b.write(testBytes2)
+        b.write(testBytes3)
+
+        ## Data should be removed buffer()._data once popped from buffer()._requests
+        assert b._data == testBytes3
+        assert len(b._requests) == 1
+        assert b._requests[-1] == testBytes3
+        
+        assert len(queue) == 2
+        assert queue.pop() == testBytes1
+        assert queue.pop() == testBytes2
+
+    def test_defaultWriteHook_SingleChunk_ManyCompleteRequest(self):
+        delimiters = [b"\r\n"]
+        delimiter = delimiters[0]
+        b = Buffer(delimiters)
+
+        testBytes1 = bytearray(b"completeReq1\r\n")
+        testBytes2 = bytearray(b"completeReq2\r\n")
+        testBytes3 = bytearray(b"completeReq3\r\n")
+        testBytes4 = bytearray(b"completeReq4\r\n")
+        testBytes5 = bytearray(b"completeReq5\r\n")
+        
+        queue = collections.deque([])
+        def requestHook(self, request):
+            nonlocal queue
+            queue.appendleft(request)
+
+
+        b._requestHook = functools.partial(requestHook, b)
+        b.write(testBytes1)
+        b.write(testBytes2)
+        b.write(testBytes3)
+        b.write(testBytes4)
+        b.write(testBytes5)
+
+        ## Data should be removed buffer()._data once popped from buffer()._requests
+        assert b._data == testBytes3
+        assert len(b._requests) == 0
+        
+        assert len(queue) == 5
+        assert queue.pop() == testBytes1
+        assert queue.pop() == testBytes2
+        assert queue.pop() == testBytes3
+        assert queue.pop() == testBytes4
+        assert queue.pop() == testBytes5
+    
+
+    def test_defaultWriteHook_SingleChunk_ManyCompleteRequest_OnePartialRequest(self):
+        delimiters = [b"\r\n"]
+        delimiter = delimiters[0]
+        b = Buffer(delimiters)
+
+        testBytes1 = bytearray(b"completeReq1\r\n")
+        testBytes2 = bytearray(b"completeReq2\r\n")
+        testBytes3 = bytearray(b"completeReq3\r\n")
+        testBytes4 = bytearray(b"completeReq4\r\n")
+        testBytes5 = bytearray(b"incompleteR")
+        
+        queue = collections.deque([])
+        def requestHook(self, request):
+            nonlocal queue
+            queue.appendleft(request)
+
+
+        b._requestHook = functools.partial(requestHook, b)
+        b.write(testBytes1)
+        b.write(testBytes2)
+        b.write(testBytes3)
+        b.write(testBytes4)
+        b.write(testBytes5)
+
+        ## Data should be removed buffer()._data once popped from buffer()._requests
+        assert b._data == testBytes3
+        assert len(b._requests) == 1
+        assert b._requests[-1] == testBytes5
+        
+        assert len(queue) == 4
+        assert queue.pop() == testBytes1
+        assert queue.pop() == testBytes2
+        assert queue.pop() == testBytes3
+        assert queue.pop() == testBytes4
+
+    
+    ## Two Chunks (> 1 request)
+    def test_defaultWriteHook_SingleChunk_OnePartialRequest(self):
+        raise NotImplementedError()
+
+    def test_defaultWriteHook_TwoChunks_OneCompleteRequest(self):
+        raise NotImplementedError()
+
+    def test_defaultWriteHook_TwoChunks_OneCompleteRequest_OnePartialRequest(self):
+        raise NotImplementedError()
+
+    def test_defaultWriteHook_TwoChunks_TwoCompleteRequest(self):
+        raise NotImplementedError()
+
+    def test_defaultWriteHook_TwoChunks_TwoCompleteRequest_OnePartialRequest(self):
+        raise NotImplementedError()
+
+    def test_defaultWriteHook_TwoChunks_ManyCompleteRequest(self):
+        raise NotImplementedError()
+
+    def test_defaultWriteHook_TwoChunks_ManyCompleteRequest_OnePartialRequest(self):
+        raise NotImplementedError()
+
+
+    ## Many Chunks (> 1 requests)
+
+
+
+
+    ## Single Chunk (completes only)
+
+    ## 1a.
+    ##  - chunk contains exactly 1 request
+    ##  - request starts at chunk start
+    ##  - request ends at chunk end
+
+    ## 3a.
+    ##  - chunk contains exactly 2 requests
+    ##  - first complete req starts at chunk start
+    ##  - last complete req ends at chunk end
+
+    ## 5a.
+    ##  - chunk contains > 2 request
+    ##  - first complete req starts at chunk start
+    ##  - last complete req ends at chunk end
+
+
+    ## Single Chunk (partial at start)
+
+    ## 2a.
+    ##  - chunk contains exactly 1 request and 1 partial request
+    ##  - complete req starts at chunk start
+    ##  - complete req ends before chunk end
+    ##  - partial req starts immediately after
+
+    ## 4a.
+    ##  - chunk contains exactly 2 request and 1 partial request
+    ##  - first complete req starts at chunk start
+    ##  - last complete req ends before chunk end
+    ##  - partial req starts immediately after
+
+    ## 6a.
+    ##  - chunk contains > 2 request and 1 partial request
+    ##  - first complete req starts at chunk start
+    ##  - last complete req ends before chunk end
+    ##  - partial req starts immediately after
+
+
+    ## Single Chunk (partial at end)
+
+    ## 2b.
+    ##  - chunk contains 1 request and 1 partial request
+    ##  - complete req starts at chunk start
+    ##  - complete req ends before chunk end
+    ##  - partial req starts immediately after
+
+    ## 4b.
+    ##  - chunk contains exactly 2 request and 1 partial request
+    ##  - first complete req starts at chunk start
+    ##  - last complete req ends before chunk end
+    ##  - partial req starts immediately after
+
+    ## 6b.
+    ##  - chunk contains > 2 request and 1 partial request
+    ##  - first complete req starts at chunk start
+    ##  - last complete req ends before chunk end
+    ##  - partial req starts immediately after
+
+
+    ## Single Chunk (partial at start and at end)
+
+    ## 0.
+    ##  - chunk contains 
+    ##      - 1 partial request (starts at current chunk, does not complete)
+    ##  - request starts at chunk start
+
+    ## 1.
+    ##  - chunk contains 
+    ##      - 1 partial (starts in prev chunk, does NOT complete)
+
+    ## 2.
+    ##  - chunk contains
+    ##      - 1 partial (starts in prev x 2 chunk, does NOT complete)
 
