@@ -792,7 +792,7 @@ class Test_Buffer_Hooks:
         b._requestHook = functools.partial(requestHook, b)
         b.write(testBytes)
 
-        assert b._data == bytearray("")
+        assert b._data == bytearray(b"")
         assert len(b._requests) == 0
         
         assert len(queue) == 1
@@ -820,7 +820,7 @@ class Test_Buffer_Hooks:
         ## Data should be removed buffer()._data once popped from buffer()._requests
         assert b._data == testBytes2
         assert len(b._requests) == 1
-        assert b._requests[-1] == testBytes2
+        assert b._requests[-1] == [testBytes2, False]
         
         assert len(queue) == 1
         assert queue.pop() == testBytes1
@@ -845,7 +845,7 @@ class Test_Buffer_Hooks:
         b.write(testBytes2)
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
-        assert b._data == bytearray("")
+        assert b._data == bytearray(b"")
         assert len(b._requests) == 0
         
         assert len(queue) == 2
@@ -876,7 +876,7 @@ class Test_Buffer_Hooks:
         ## Data should be removed buffer()._data once popped from buffer()._requests
         assert b._data == testBytes3
         assert len(b._requests) == 1
-        assert b._requests[-1] == testBytes3
+        assert b._requests[-1] == [testBytes3, False]
         
         assert len(queue) == 2
         assert queue.pop() == testBytes1
@@ -907,7 +907,7 @@ class Test_Buffer_Hooks:
         b.write(testBytes5)
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
-        assert b._data == testBytes3
+        assert b._data == bytearray(b"")
         assert len(b._requests) == 0
         
         assert len(queue) == 5
@@ -943,9 +943,9 @@ class Test_Buffer_Hooks:
         b.write(testBytes5)
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
-        assert b._data == testBytes3
+        assert b._data == testBytes5
         assert len(b._requests) == 1
-        assert b._requests[-1] == testBytes5
+        assert b._requests[-1] == [testBytes5, False]
         
         assert len(queue) == 4
         assert queue.pop() == testBytes1
