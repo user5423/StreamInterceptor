@@ -896,6 +896,7 @@ class Test_Buffer_Hooks:
         assert queue.pop() == req1
         assert queue.pop() == req2
 
+
     def test_defaultWriteHook_SingleChunk_ManyCompleteRequest(self):
         delimiters = [b"\r\n"]
         delimiter = delimiters[0]
@@ -966,7 +967,7 @@ class Test_Buffer_Hooks:
         assert queue.pop() == req4
 
     
-
+    ## Tests for request spreading over chunks (spread from start chunk 1 to mid chunk 2)
     def test_defaultWriteHook_TwoChunk_OneSpreadCompleteRequest_OneCompleteRequest(self):
         delimiters = [b"\r\n"]
         delimiter = delimiters[0]
@@ -1135,7 +1136,246 @@ class Test_Buffer_Hooks:
         assert queue.pop() == bytearray(b"completeReq5\r\n")
 
 
-    ## Additional tests for delimiter spreading
+    ## Tests for request spreading over chunks (spread from start from mid chunk 1 to mid chunk 2)
+    def test_defaultWriteHook_TwoChunk_OneCompleteRequest_OneSpreadCompleteRequest(self):
+        delimiters = [b"\r\n"]
+        delimiter = delimiters[0]
+        b = Buffer(delimiters)
+
+        chunk1 = bytearray(b"completeReq1\r\ncomp")
+        chunk2 = bytearray(b"leteReq2\r\n")
+        
+        queue = collections.deque([])
+        def requestHook(self, request):
+            nonlocal queue
+            queue.appendleft(request)
+
+
+        b._requestHook = functools.partial(requestHook, b)
+        b.write(chunk1)
+        b.write(chunk2)
+
+        ## Data should be removed buffer()._data once popped from buffer()._requests
+        assert b._data == bytearray(b"")
+        assert len(b._requests) == 0
+        
+        assert len(queue) == 2
+        assert queue.pop() == bytearray(b"completeReq1\r\n")
+        assert queue.pop() == bytearray(b"completeReq2\r\n")
+
+
+    def test_defaultWriteHook_TwoChunk_OneCompleteRequest_OneSpreadCompleteRequest_OneParitalRequest(self):
+        delimiters = [b"\r\n"]
+        delimiter = delimiters[0]
+        b = Buffer(delimiters)
+
+        chunk1 = bytearray(b"completeReq1\r\ncomp")
+        chunk2 = bytearray(b"leteReq2\r\nincompleteR")
+        
+        queue = collections.deque([])
+        def requestHook(self, request):
+            nonlocal queue
+            queue.appendleft(request)
+
+
+        b._requestHook = functools.partial(requestHook, b)
+        b.write(chunk1)
+        b.write(chunk2)
+
+        ## Data should be removed buffer()._data once popped from buffer()._requests
+        assert b._data == bytearray(b"incompleteR")
+        assert len(b._requests) == 1
+        assert b._requests[-1] == [bytearray(b"incompleteR"), False]
+        
+        assert len(queue) == 2
+        assert queue.pop() == bytearray(b"completeReq1\r\n")
+        assert queue.pop() == bytearray(b"completeReq2\r\n")
+
+
+    def test_defaultWriteHook_TwoChunk_OneCompleteRequest_OneSpreadCompleteRequest_OneCompleteRequest(self):
+        delimiters = [b"\r\n"]
+        delimiter = delimiters[0]
+        b = Buffer(delimiters)
+
+        chunk1 = bytearray(b"completeReq1\r\ncomp")
+        chunk2 = bytearray(b"leteReq2\r\ncompleteReq3\r\n")
+        
+        queue = collections.deque([])
+        def requestHook(self, request):
+            nonlocal queue
+            queue.appendleft(request)
+
+
+        b._requestHook = functools.partial(requestHook, b)
+        b.write(chunk1)
+        b.write(chunk2)
+
+        ## Data should be removed buffer()._data once popped from buffer()._requests
+        assert b._data == bytearray(b"")
+        assert len(b._requests) == 0
+        
+        assert len(queue) == 3
+        assert queue.pop() == bytearray(b"completeReq1\r\n")
+        assert queue.pop() == bytearray(b"completeReq2\r\n")
+        assert queue.pop() == bytearray(b"completeReq3\r\n")
+
+
+    def test_defaultWriteHook_TwoChunk_OneCompleteRequest_OneSpreadCompleteRequest_OneCompleteRequest_OnePartialRequest(self):
+        delimiters = [b"\r\n"]
+        delimiter = delimiters[0]
+        b = Buffer(delimiters)
+
+        chunk1 = bytearray(b"completeReq1\r\ncomp")
+        chunk2 = bytearray(b"leteReq2\r\ncompleteReq3\r\nincompleteR")
+        
+        queue = collections.deque([])
+        def requestHook(self, request):
+            nonlocal queue
+            queue.appendleft(request)
+
+
+        b._requestHook = functools.partial(requestHook, b)
+        b.write(chunk1)
+        b.write(chunk2)
+
+        ## Data should be removed buffer()._data once popped from buffer()._requests
+        assert b._data == bytearray(b"incompleteR")
+        assert len(b._requests) == 1
+        assert b._requests[-1] == [bytearray(b"incompleteR"), False]
+        
+        assert len(queue) == 3
+        assert queue.pop() == bytearray(b"completeReq1\r\n")
+        assert queue.pop() == bytearray(b"completeReq2\r\n")
+        assert queue.pop() == bytearray(b"completeReq3\r\n")
+
+
+    def test_defaultWriteHook_TwoChunk_OneCompleteRequest_OneSpreadCompleteRequest_TwoCompleteRequest(self):
+        delimiters = [b"\r\n"]
+        delimiter = delimiters[0]
+        b = Buffer(delimiters)
+
+        chunk1 = bytearray(b"completeReq1\r\ncomp")
+        chunk2 = bytearray(b"leteReq2\r\ncompleteReq3\r\ncompleteReq4\r\n")
+        
+        queue = collections.deque([])
+        def requestHook(self, request):
+            nonlocal queue
+            queue.appendleft(request)
+
+
+        b._requestHook = functools.partial(requestHook, b)
+        b.write(chunk1)
+        b.write(chunk2)
+
+        ## Data should be removed buffer()._data once popped from buffer()._requests
+        assert b._data == bytearray(b"")
+        assert len(b._requests) == 0
+        
+        assert len(queue) == 4
+        assert queue.pop() == bytearray(b"completeReq1\r\n")
+        assert queue.pop() == bytearray(b"completeReq2\r\n")
+        assert queue.pop() == bytearray(b"completeReq3\r\n")
+        assert queue.pop() == bytearray(b"completeReq4\r\n")
+
+
+    def test_defaultWriteHook_TwoChunk_OneCompleteRequest_OneSpreadCompleteRequest_TwoCompleteRequest_OnePartialRequest(self):
+        delimiters = [b"\r\n"]
+        delimiter = delimiters[0]
+        b = Buffer(delimiters)
+
+        chunk1 = bytearray(b"completeReq1\r\ncomp")
+        chunk2 = bytearray(b"leteReq2\r\ncompleteReq3\r\ncompleteReq4\r\nincompleteR")
+        
+        queue = collections.deque([])
+        def requestHook(self, request):
+            nonlocal queue
+            queue.appendleft(request)
+
+
+        b._requestHook = functools.partial(requestHook, b)
+        b.write(chunk1)
+        b.write(chunk2)
+
+        ## Data should be removed buffer()._data once popped from buffer()._requests
+        assert b._data == bytearray(b"incompleteR")
+        assert len(b._requests) == 1
+        assert b._requests[-1] == [bytearray(b"incompleteR"), False]
+        
+        assert len(queue) == 4
+        assert queue.pop() == bytearray(b"completeReq1\r\n")
+        assert queue.pop() == bytearray(b"completeReq2\r\n")
+        assert queue.pop() == bytearray(b"completeReq3\r\n")
+        assert queue.pop() == bytearray(b"completeReq4\r\n")
+
+
+    def test_defaultWriteHook_TwoChunk_OneCompleteRequest_OneSpreadCompleteRequest_ManyCompleteRequest(self):
+        delimiters = [b"\r\n"]
+        delimiter = delimiters[0]
+        b = Buffer(delimiters)
+
+        chunk1 = bytearray(b"completeReq1\r\ncomp")
+        chunk2 = bytearray(b"leteReq2\r\ncompleteReq3\r\ncompleteReq4\r\ncompleteReq5\r\ncompleteReq6\r\n")
+        
+        queue = collections.deque([])
+        def requestHook(self, request):
+            nonlocal queue
+            queue.appendleft(request)
+
+
+        b._requestHook = functools.partial(requestHook, b)
+        b.write(chunk1)
+        b.write(chunk2)
+
+        ## Data should be removed buffer()._data once popped from buffer()._requests
+        assert b._data == bytearray(b"")
+        assert len(b._requests) == 0
+        
+        assert len(queue) == 6
+        assert queue.pop() == bytearray(b"completeReq1\r\n")
+        assert queue.pop() == bytearray(b"completeReq2\r\n")
+        assert queue.pop() == bytearray(b"completeReq3\r\n")
+        assert queue.pop() == bytearray(b"completeReq4\r\n")
+        assert queue.pop() == bytearray(b"completeReq5\r\n")
+        assert queue.pop() == bytearray(b"completeReq6\r\n")
+
+
+    def test_defaultWriteHook_TwoChunk_OneCompleteRequest_OneSpreadCompleteRequest_ManyCompleteRequest_OnePartial(self):
+        delimiters = [b"\r\n"]
+        delimiter = delimiters[0]
+        b = Buffer(delimiters)
+
+        chunk1 = bytearray(b"completeReq1\r\ncomp")
+        chunk2 = bytearray(b"leteReq2\r\ncompleteReq3\r\ncompleteReq4\r\ncompleteReq5\r\ncompleteReq6\r\nincompleteR")
+        
+        queue = collections.deque([])
+        def requestHook(self, request):
+            nonlocal queue
+            queue.appendleft(request)
+
+
+        b._requestHook = functools.partial(requestHook, b)
+        b.write(chunk1)
+        b.write(chunk2)
+
+        ## Data should be removed buffer()._data once popped from buffer()._requests
+        assert b._data == bytearray(b"incompleteR")
+        assert len(b._requests) == 1
+        assert b._requests[-1] == [bytearray(b"incompleteR"), False]
+        
+        assert len(queue) == 6
+        assert queue.pop() == bytearray(b"completeReq1\r\n")
+        assert queue.pop() == bytearray(b"completeReq2\r\n")
+        assert queue.pop() == bytearray(b"completeReq3\r\n")
+        assert queue.pop() == bytearray(b"completeReq4\r\n")
+        assert queue.pop() == bytearray(b"completeReq5\r\n")
+        assert queue.pop() == bytearray(b"completeReq6\r\n")
+
+    
+    ## TODO: Tests for request spreading over chunks (spread from start from mid chunk 1 to end chunk 2)
+    ## The number of combos are too much
+
+
+    ## Tests for request delimiter spreading over chunks
     def test_defaultWriteHook_TwoChunk_OneSpreadDelimiterCompleteRequest(self):
         delimiters = [b"\r\n"]
         delimiter = delimiters[0]
@@ -1316,6 +1556,7 @@ class Test_Buffer_Hooks:
     ## TODO: Consider restructuring delimiter chunk-split tests
 
 
+    ## TODO: Consider adding ManyChunk tests cases
     
 
     # def test_defaultWriteHook_TwoChunks_OneCompleteRequest(self):
