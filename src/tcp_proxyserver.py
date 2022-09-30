@@ -17,7 +17,8 @@ from _proxyDS import Buffer, proxyHandlerDescriptor, ProxyInterceptor
 
 
 
-
+## BUG: Call to write() calls read() and calls to read() call write()
+## --> Results in infinite recursive loop
 @dataclass
 class ProxyTunnel:
     clientToProxySocket: socket.socket
@@ -25,11 +26,14 @@ class ProxyTunnel:
     streamInterceptor: ProxyInterceptor
     CHUNK_SIZE: int = field(default=1024)
 
-    clientToServerBuffer: Buffer = field(init=False, default_factory=Buffer)
-    serverToClientBuffer: Buffer = field(init=False, default_factory=Buffer)
 
     def __post_init__(self):
+        ## Initialize streamInterceptor
         self.streamInterceptor = self.streamInterceptor()
+        ## Setup Bidirectional Buffers
+        self.serverToClientBuffer = Buffer(self.streamInterceptor.REQUEST_DELIMITERS)
+        self.clientToServerBuffer = Buffer(self.streamInterceptor.REQUEST_DELIMITERS)
+        ## Set hooks on Bidirectional Buffers
         self.clientToServerBuffer.setHook(self.streamInterceptor.clientToServerHook)
         self.serverToClientBuffer.setHook(self.streamInterceptor.serverToClientHook)
 
