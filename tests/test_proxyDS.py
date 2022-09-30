@@ -702,20 +702,10 @@ class Test_Buffer_Hooks:
     ## _requestHook()
     ## _writeHook()
 
-    def _setupRequestHookMock(self, buffer: Buffer) -> collections.deque:
-        ## NOTE: The return queue returns the requests that were passed to the requestHook (in LIFO order)
-        queue = collections.deque([])
-        def requestHook(self, request):
-            nonlocal queue
-            queue.appendleft(request)
-
-        buffer._requestHook = functools.partial(requestHook, buffer)
-        return queue
-
     def test_hookSettingAndCalling(self):
         delimiters = [b"\r\n"]
         b = Buffer(delimiters)
-        chunk = bytearray(b"test")
+        chunk = bytearray(b"completeRequest\r\n") ## requestHook only called on completeRequests
         
         isRan = False
         def func(buffer, chunkBytes):
@@ -723,9 +713,8 @@ class Test_Buffer_Hooks:
             isRan = True
         
         b.setHook(func)
-        b._writeHook(chunk)
+        b._requestHook(chunk)
         assert isRan == True
-
 
         isRan = False
         b.execWriteHook(chunk)
@@ -738,9 +727,20 @@ class Test_Buffer_Hooks:
 
     ## TODO: Write methods for Buffer()._requestHook
 
-    ## Scenarios
     
+class Test_Buffer_RequestParsing:
 
+    def _setupRequestHookMock(self, buffer: Buffer) -> collections.deque:
+        ## NOTE: The return queue returns the requests that were passed to the requestHook (in LIFO order)
+        queue = collections.deque([])
+        def requestHook(self, request):
+            nonlocal queue
+            queue.appendleft(request)
+
+        buffer._requestHook = functools.partial(requestHook, buffer)
+        return queue
+
+    ## Scenarios
     ## starts
     ## - req starts on first byte of chunk
     ## - req starts on a middle byte of chunk
