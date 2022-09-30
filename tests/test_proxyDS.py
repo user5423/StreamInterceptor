@@ -702,6 +702,16 @@ class Test_Buffer_Hooks:
     ## _requestHook()
     ## _writeHook()
 
+    def _setupRequestHookMock(self, buffer: Buffer) -> collections.deque:
+        ## NOTE: The return queue returns the requests that were passed to the requestHook (in LIFO order)
+        queue = collections.deque([])
+        def requestHook(self, request):
+            nonlocal queue
+            queue.appendleft(request)
+
+        buffer._requestHook = functools.partial(requestHook, buffer)
+        return queue
+
     def test_hookSettingAndCalling(self):
         delimiters = [b"\r\n"]
         b = Buffer(delimiters)
@@ -759,19 +769,10 @@ class Test_Buffer_Hooks:
         delimiters = [b"\r\n"]
         delimiter = delimiters[0]
         b = Buffer(delimiters)
+        queue = self._setupRequestHookMock(b)
 
         req1 = bytearray(b"incompleteR")
-
-        chunk = bytearray(b"")
-        chunk += req1
-        
-        queue = collections.deque([])
-        def requestHook(self, request):
-            nonlocal queue
-            queue.appendleft(request)
-
-
-        b._requestHook = functools.partial(requestHook, b)
+        chunk = req1
         b.write(chunk)
 
         assert b._data == chunk
@@ -785,19 +786,10 @@ class Test_Buffer_Hooks:
         delimiters = [b"\r\n"]
         delimiter = delimiters[0]
         b = Buffer(delimiters)
+        queue = self._setupRequestHookMock(b)
 
         req1 = bytearray(b"completeReq\r\n")
-
-        chunk = bytearray(b"")
-        chunk += req1
-        
-        queue = collections.deque([])
-        def requestHook(self, request):
-            nonlocal queue
-            queue.appendleft(request)
-
-
-        b._requestHook = functools.partial(requestHook, b)
+        chunk = req1
         b.write(chunk)
 
         assert b._data == bytearray(b"")
@@ -811,20 +803,11 @@ class Test_Buffer_Hooks:
         delimiters = [b"\r\n"]
         delimiter = delimiters[0]
         b = Buffer(delimiters)
+        queue = self._setupRequestHookMock(b)
 
         req1 = bytearray(b"completeReq1\r\n")
         req2 = bytearray(b"incompleteR")
-        
-        chunk = bytearray(b"")
-        chunk += req1 + req2
-
-        queue = collections.deque([])
-        def requestHook(self, request):
-            nonlocal queue
-            queue.appendleft(request)
-
-
-        b._requestHook = functools.partial(requestHook, b)
+        chunk = req1 + req2
         b.write(chunk)
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
@@ -840,20 +823,11 @@ class Test_Buffer_Hooks:
         delimiters = [b"\r\n"]
         delimiter = delimiters[0]
         b = Buffer(delimiters)
+        queue = self._setupRequestHookMock(b)
 
         req1 = bytearray(b"completeReq1\r\n")
         req2 = bytearray(b"completeReq2\r\n")
-
-        chunk = bytearray(b"")
-        chunk += req1 + req2
-        
-        queue = collections.deque([])
-        def requestHook(self, request):
-            nonlocal queue
-            queue.appendleft(request)
-
-
-        b._requestHook = functools.partial(requestHook, b)
+        chunk = req1 + req2
         b.write(chunk)
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
@@ -869,22 +843,12 @@ class Test_Buffer_Hooks:
         delimiters = [b"\r\n"]
         delimiter = delimiters[0]
         b = Buffer(delimiters)
+        queue = self._setupRequestHookMock(b)
 
         req1 = bytearray(b"completeReq1\r\n")
         req2 = bytearray(b"completeReq2\r\n")
         req3 = bytearray(b"incompleteR")
-
-        chunk = bytearray(b"")
-        chunk += req1 + req2 + req3
-
-        
-        queue = collections.deque([])
-        def requestHook(self, request):
-            nonlocal queue
-            queue.appendleft(request)
-
-
-        b._requestHook = functools.partial(requestHook, b)
+        chunk = req1 + req2 + req3
         b.write(chunk)
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
@@ -901,23 +865,14 @@ class Test_Buffer_Hooks:
         delimiters = [b"\r\n"]
         delimiter = delimiters[0]
         b = Buffer(delimiters)
+        queue = self._setupRequestHookMock(b)
 
         req1 = bytearray(b"completeReq1\r\n")
         req2 = bytearray(b"completeReq2\r\n")
         req3 = bytearray(b"completeReq3\r\n")
         req4 = bytearray(b"completeReq4\r\n")
         req5 = bytearray(b"completeReq5\r\n")
-
-        chunk = bytearray(b"")
-        chunk += req1 + req2 + req3 + req4 + req5
-        
-        queue = collections.deque([])
-        def requestHook(self, request):
-            nonlocal queue
-            queue.appendleft(request)
-
-
-        b._requestHook = functools.partial(requestHook, b)
+        chunk = req1 + req2 + req3 + req4 + req5
         b.write(chunk)
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
@@ -936,23 +891,14 @@ class Test_Buffer_Hooks:
         delimiters = [b"\r\n"]
         delimiter = delimiters[0]
         b = Buffer(delimiters)
+        queue = self._setupRequestHookMock(b)
 
         req1 = bytearray(b"completeReq1\r\n")
         req2 = bytearray(b"completeReq2\r\n")
         req3 = bytearray(b"completeReq3\r\n")
         req4 = bytearray(b"completeReq4\r\n")
         req5 = bytearray(b"incompleteR")
-        
-        chunk = bytearray(b"")
-        chunk += req1 + req2 + req3 + req4 + req5
-
-        queue = collections.deque([])
-        def requestHook(self, request):
-            nonlocal queue
-            queue.appendleft(request)
-
-
-        b._requestHook = functools.partial(requestHook, b)
+        chunk = req1 + req2 + req3 + req4 + req5
         b.write(chunk)
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
@@ -972,17 +918,10 @@ class Test_Buffer_Hooks:
         delimiters = [b"\r\n"]
         delimiter = delimiters[0]
         b = Buffer(delimiters)
+        queue = self._setupRequestHookMock(b)
 
         chunk1 = bytearray(b"complete")
         chunk2 = bytearray(b"Req1\r\ncompleteReq2\r\n")
-        
-        queue = collections.deque([])
-        def requestHook(self, request):
-            nonlocal queue
-            queue.appendleft(request)
-
-
-        b._requestHook = functools.partial(requestHook, b)
         b.write(chunk1)
         b.write(chunk2)
 
@@ -999,16 +938,10 @@ class Test_Buffer_Hooks:
         delimiters = [b"\r\n"]
         delimiter = delimiters[0]
         b = Buffer(delimiters)
+        queue = self._setupRequestHookMock(b)
 
         chunk1 = bytearray(b"complete")
         chunk2 = bytearray(b"Req1\r\ncompleteReq2\r\nincompleteR")
-        
-        queue = collections.deque([])
-        def requestHook(self, request):
-            nonlocal queue
-            queue.appendleft(request)
-
-        b._requestHook = functools.partial(requestHook, b)
         b.write(chunk1)
         b.write(chunk2)
 
@@ -1026,16 +959,10 @@ class Test_Buffer_Hooks:
         delimiters = [b"\r\n"]
         delimiter = delimiters[0]
         b = Buffer(delimiters)
+        queue = self._setupRequestHookMock(b)
 
         chunk1 = bytearray(b"complete")
         chunk2 = bytearray(b"Req1\r\ncompleteReq2\r\ncompleteReq3\r\n")
-        
-        queue = collections.deque([])
-        def requestHook(self, request):
-            nonlocal queue
-            queue.appendleft(request)
-
-        b._requestHook = functools.partial(requestHook, b)
         b.write(chunk1)
         b.write(chunk2)
 
@@ -1053,16 +980,10 @@ class Test_Buffer_Hooks:
         delimiters = [b"\r\n"]
         delimiter = delimiters[0]
         b = Buffer(delimiters)
+        queue = self._setupRequestHookMock(b)
 
         chunk1 = bytearray(b"complete")
         chunk2 = bytearray(b"Req1\r\ncompleteReq2\r\ncompleteReq3\r\nincompleteR")
-        
-        queue = collections.deque([])
-        def requestHook(self, request):
-            nonlocal queue
-            queue.appendleft(request)
-
-        b._requestHook = functools.partial(requestHook, b)
         b.write(chunk1)
         b.write(chunk2)
 
@@ -1081,16 +1002,10 @@ class Test_Buffer_Hooks:
         delimiters = [b"\r\n"]
         delimiter = delimiters[0]
         b = Buffer(delimiters)
+        queue = self._setupRequestHookMock(b)
 
         chunk1 = bytearray(b"complete")
         chunk2 = bytearray(b"Req1\r\ncompleteReq2\r\ncompleteReq3\r\ncompleteReq4\r\ncompleteReq5\r\n")
-        
-        queue = collections.deque([])
-        def requestHook(self, request):
-            nonlocal queue
-            queue.appendleft(request)
-
-        b._requestHook = functools.partial(requestHook, b)
         b.write(chunk1)
         b.write(chunk2)
 
@@ -1110,16 +1025,10 @@ class Test_Buffer_Hooks:
         delimiters = [b"\r\n"]
         delimiter = delimiters[0]
         b = Buffer(delimiters)
+        queue = self._setupRequestHookMock(b)
 
         chunk1 = bytearray(b"complete")
         chunk2 = bytearray(b"Req1\r\ncompleteReq2\r\ncompleteReq3\r\ncompleteReq4\r\ncompleteReq5\r\nincompleteR")
-        
-        queue = collections.deque([])
-        def requestHook(self, request):
-            nonlocal queue
-            queue.appendleft(request)
-
-        b._requestHook = functools.partial(requestHook, b)
         b.write(chunk1)
         b.write(chunk2)
 
@@ -1141,17 +1050,10 @@ class Test_Buffer_Hooks:
         delimiters = [b"\r\n"]
         delimiter = delimiters[0]
         b = Buffer(delimiters)
+        queue = self._setupRequestHookMock(b)
 
         chunk1 = bytearray(b"completeReq1\r\ncomp")
         chunk2 = bytearray(b"leteReq2\r\n")
-        
-        queue = collections.deque([])
-        def requestHook(self, request):
-            nonlocal queue
-            queue.appendleft(request)
-
-
-        b._requestHook = functools.partial(requestHook, b)
         b.write(chunk1)
         b.write(chunk2)
 
@@ -1168,17 +1070,10 @@ class Test_Buffer_Hooks:
         delimiters = [b"\r\n"]
         delimiter = delimiters[0]
         b = Buffer(delimiters)
+        queue = self._setupRequestHookMock(b)
 
         chunk1 = bytearray(b"completeReq1\r\ncomp")
         chunk2 = bytearray(b"leteReq2\r\nincompleteR")
-        
-        queue = collections.deque([])
-        def requestHook(self, request):
-            nonlocal queue
-            queue.appendleft(request)
-
-
-        b._requestHook = functools.partial(requestHook, b)
         b.write(chunk1)
         b.write(chunk2)
 
@@ -1196,17 +1091,10 @@ class Test_Buffer_Hooks:
         delimiters = [b"\r\n"]
         delimiter = delimiters[0]
         b = Buffer(delimiters)
+        queue = self._setupRequestHookMock(b)
 
         chunk1 = bytearray(b"completeReq1\r\ncomp")
         chunk2 = bytearray(b"leteReq2\r\ncompleteReq3\r\n")
-        
-        queue = collections.deque([])
-        def requestHook(self, request):
-            nonlocal queue
-            queue.appendleft(request)
-
-
-        b._requestHook = functools.partial(requestHook, b)
         b.write(chunk1)
         b.write(chunk2)
 
@@ -1224,17 +1112,10 @@ class Test_Buffer_Hooks:
         delimiters = [b"\r\n"]
         delimiter = delimiters[0]
         b = Buffer(delimiters)
+        queue = self._setupRequestHookMock(b)
 
         chunk1 = bytearray(b"completeReq1\r\ncomp")
         chunk2 = bytearray(b"leteReq2\r\ncompleteReq3\r\nincompleteR")
-        
-        queue = collections.deque([])
-        def requestHook(self, request):
-            nonlocal queue
-            queue.appendleft(request)
-
-
-        b._requestHook = functools.partial(requestHook, b)
         b.write(chunk1)
         b.write(chunk2)
 
@@ -1253,17 +1134,10 @@ class Test_Buffer_Hooks:
         delimiters = [b"\r\n"]
         delimiter = delimiters[0]
         b = Buffer(delimiters)
+        queue = self._setupRequestHookMock(b)
 
         chunk1 = bytearray(b"completeReq1\r\ncomp")
         chunk2 = bytearray(b"leteReq2\r\ncompleteReq3\r\ncompleteReq4\r\n")
-        
-        queue = collections.deque([])
-        def requestHook(self, request):
-            nonlocal queue
-            queue.appendleft(request)
-
-
-        b._requestHook = functools.partial(requestHook, b)
         b.write(chunk1)
         b.write(chunk2)
 
@@ -1282,17 +1156,10 @@ class Test_Buffer_Hooks:
         delimiters = [b"\r\n"]
         delimiter = delimiters[0]
         b = Buffer(delimiters)
+        queue = self._setupRequestHookMock(b)
 
         chunk1 = bytearray(b"completeReq1\r\ncomp")
         chunk2 = bytearray(b"leteReq2\r\ncompleteReq3\r\ncompleteReq4\r\nincompleteR")
-        
-        queue = collections.deque([])
-        def requestHook(self, request):
-            nonlocal queue
-            queue.appendleft(request)
-
-
-        b._requestHook = functools.partial(requestHook, b)
         b.write(chunk1)
         b.write(chunk2)
 
@@ -1312,17 +1179,10 @@ class Test_Buffer_Hooks:
         delimiters = [b"\r\n"]
         delimiter = delimiters[0]
         b = Buffer(delimiters)
+        queue = self._setupRequestHookMock(b)
 
         chunk1 = bytearray(b"completeReq1\r\ncomp")
         chunk2 = bytearray(b"leteReq2\r\ncompleteReq3\r\ncompleteReq4\r\ncompleteReq5\r\ncompleteReq6\r\n")
-        
-        queue = collections.deque([])
-        def requestHook(self, request):
-            nonlocal queue
-            queue.appendleft(request)
-
-
-        b._requestHook = functools.partial(requestHook, b)
         b.write(chunk1)
         b.write(chunk2)
 
@@ -1343,17 +1203,10 @@ class Test_Buffer_Hooks:
         delimiters = [b"\r\n"]
         delimiter = delimiters[0]
         b = Buffer(delimiters)
+        queue = self._setupRequestHookMock(b)
 
         chunk1 = bytearray(b"completeReq1\r\ncomp")
         chunk2 = bytearray(b"leteReq2\r\ncompleteReq3\r\ncompleteReq4\r\ncompleteReq5\r\ncompleteReq6\r\nincompleteR")
-        
-        queue = collections.deque([])
-        def requestHook(self, request):
-            nonlocal queue
-            queue.appendleft(request)
-
-
-        b._requestHook = functools.partial(requestHook, b)
         b.write(chunk1)
         b.write(chunk2)
 
@@ -1380,16 +1233,10 @@ class Test_Buffer_Hooks:
         delimiters = [b"\r\n"]
         delimiter = delimiters[0]
         b = Buffer(delimiters)
+        queue = self._setupRequestHookMock(b)
 
         chunk1 = bytearray(b"completeReq")
         chunk2 = bytearray(b"\r\n")
-        
-        queue = collections.deque([])
-        def requestHook(self, request):
-            nonlocal queue
-            queue.appendleft(request)
-
-        b._requestHook = functools.partial(requestHook, b)
         b.write(chunk1)
         b.write(chunk2)
 
@@ -1405,16 +1252,10 @@ class Test_Buffer_Hooks:
         delimiters = [b"\r\n"]
         delimiter = delimiters[0]
         b = Buffer(delimiters)
+        queue = self._setupRequestHookMock(b)
 
         chunk1 = bytearray(b"completeReq\r")
         chunk2 = bytearray(b"\n")
-        
-        queue = collections.deque([])
-        def requestHook(self, request):
-            nonlocal queue
-            queue.appendleft(request)
-
-        b._requestHook = functools.partial(requestHook, b)
         b.write(chunk1)
         b.write(chunk2)
 
@@ -1430,16 +1271,10 @@ class Test_Buffer_Hooks:
         delimiters = [b"\r\n"]
         delimiter = delimiters[0]
         b = Buffer(delimiters)
+        queue = self._setupRequestHookMock(b)
 
         chunk1 = bytearray(b"completeReq\r")
         chunk2 = bytearray(b"\nincompleteR")
-        
-        queue = collections.deque([])
-        def requestHook(self, request):
-            nonlocal queue
-            queue.appendleft(request)
-
-        b._requestHook = functools.partial(requestHook, b)
         b.write(chunk1)
         b.write(chunk2)
 
@@ -1456,16 +1291,10 @@ class Test_Buffer_Hooks:
         delimiters = [b"\r\n"]
         delimiter = delimiters[0]
         b = Buffer(delimiters)
+        queue = self._setupRequestHookMock(b)
 
         chunk1 = bytearray(b"completeReq1\r")
         chunk2 = bytearray(b"\ncompleteReq2\r\n")
-        
-        queue = collections.deque([])
-        def requestHook(self, request):
-            nonlocal queue
-            queue.appendleft(request)
-
-        b._requestHook = functools.partial(requestHook, b)
         b.write(chunk1)
         b.write(chunk2)
 
@@ -1482,16 +1311,10 @@ class Test_Buffer_Hooks:
         delimiters = [b"\r\n\r\n"]
         delimiter = delimiters[0]
         b = Buffer(delimiters)
+        queue = self._setupRequestHookMock(b)
 
         chunk1 = bytearray(b"completeReq\r")
         chunk2 = bytearray(b"\n\r\n")
-        
-        queue = collections.deque([])
-        def requestHook(self, request):
-            nonlocal queue
-            queue.appendleft(request)
-
-        b._requestHook = functools.partial(requestHook, b)
         b.write(chunk1)
         b.write(chunk2)
 
@@ -1507,16 +1330,10 @@ class Test_Buffer_Hooks:
         delimiters = [b"\r\n\r\n"]
         delimiter = delimiters[0]
         b = Buffer(delimiters)
+        queue = self._setupRequestHookMock(b)
 
         chunk1 = bytearray(b"completeReq\r\n")
         chunk2 = bytearray(b"\r\n")
-        
-        queue = collections.deque([])
-        def requestHook(self, request):
-            nonlocal queue
-            queue.appendleft(request)
-
-        b._requestHook = functools.partial(requestHook, b)
         b.write(chunk1)
         b.write(chunk2)
 
@@ -1532,16 +1349,10 @@ class Test_Buffer_Hooks:
         delimiters = [b"\r\n\r\n"]
         delimiter = delimiters[0]
         b = Buffer(delimiters)
+        queue = self._setupRequestHookMock(b)
 
         chunk1 = bytearray(b"completeReq\r\n\r")
         chunk2 = bytearray(b"\n")
-        
-        queue = collections.deque([])
-        def requestHook(self, request):
-            nonlocal queue
-            queue.appendleft(request)
-
-        b._requestHook = functools.partial(requestHook, b)
         b.write(chunk1)
         b.write(chunk2)
 
