@@ -186,6 +186,133 @@ class Test_ProxyTunnel_Init:
     
 
 class Test_ProxyTunnel_ByteOperations:
+    ## ProxyTunnel().readFrom()
+    ## ProxyTunnel().writeTo()
+
+    ## readFrom() tests
+    ## - nonparticipating socket
+    ## - write to buffer (exceeds MAX_LENGTH) 
+    ## - data.recv() == b"" (socket closed)
+    ## - len(data.recv()) > 0 (continuation)
+
+    ## ProxyTunnel().readFrom() tests
+    def test_readFrom_nonparticipatingSocket(self, createProxyTunnel):
+        # pt, _ = PTTestResources._setupPT()
+        pt, _ = createProxyTunnel
+        nonparticipatingSocket = PTTestResources.createClientSocket()
+
+        with pytest.raises(Exception) as excInfo:
+            pt.readFrom(nonparticipatingSocket)
+        
+        assert "not associated with this tunnel" in str(excInfo.value)
+
+
+    def test_readFrom_bufferOverflow_clientToProxy(self, createProxyTunnel):
+        pt, socketList = createProxyTunnel
+        buffer = pt._selectBufferForRead(socketList[1])
+        testdata = b"A" * (buffer.MAX_BUFFER_SIZE + 1)
+        socketList[0].sendall(testdata)
+
+        with pytest.raises(_exceptions.BufferOverflowError) as excInfo:
+            pt.readFrom(pt.clientToProxySocket)
+
+        assert "Max Buffer Size has been exceeded" in str(excInfo.value)
+
+
+    def test_readFrom_emptyRead_clientToProxy(self, createProxyTunnel):
+        ## NOTE: An empty recv() should mean the connection was closed on the otherside
+        pt, socketList = createProxyTunnel
+        socketList[0].close()
+        buffer = pt._selectBufferForRead(socketList[1])
+
+        ret = pt.readFrom(socketList[1])
+
+        assert ret == None
+        assert buffer._data == bytearray(b"")
+        assert len(buffer._requests) == 0
+
+
+    def test_readFrom_emptyRead_proxyToServer(self, createProxyTunnel):
+        pt, socketList = createProxyTunnel
+        socketList[3].close()
+        buffer = pt._selectBufferForRead(socketList[2])
+
+        ret = pt.readFrom(socketList[2])
+
+        assert ret == None
+        assert buffer._data == bytearray(b"")
+        assert len(buffer._requests) == 0
+
+    
+    def test_readFrom_nonEmptyRecv_clientToProxy(self, createProxyTunnel):
+        pt, socketList = createProxyTunnel
+        testData = b"testdata"
+        socketList[0].sendall(testData)
+        ret = pt.readFrom(socketList[1])
+        buffer = pt._selectBufferForRead(socketList[1])
+
+        assert ret == len(testData)
+        assert buffer._data == bytearray(testData)
+        assert len(buffer._requests) == 1
+        assert buffer._requests[-1] == [bytearray(testData), False]
+    
+
+    def test_readFrom_nonEmptyRecv_clientToProxy(self, createProxyTunnel):
+        pt, socketList = createProxyTunnel
+        testData = b"testdata"
+        socketList[3].sendall(testData)
+        ret = pt.readFrom(socketList[2])
+        buffer = pt._selectBufferForRead(socketList[2])
+
+        assert ret == len(testData)
+        assert buffer._data == bytearray(testData)
+        assert len(buffer._requests) == 1
+        assert buffer._requests[-1] == [bytearray(testData), False]
+
+    
+    def test_readFrom_OneRead_OneEmptyRead_clientToProxy(self, createProxyTunnel):
+        pt, socketList = createProxyTunnel
+        buffer = pt._selectBufferForRead(socketList[1])
+        testData = b"testdata"
+        
+        socketList[0].sendall(testData)
+        socketList[0].close()
+        
+        ret = pt.readFrom(socketList[1])
+        assert ret == len(testData)
+        assert buffer._data == bytearray(testData)
+        assert len(buffer._requests) == 1
+        assert buffer._requests[-1] == [bytearray(testData), False]
+
+        ret = pt.readFrom(socketList[1])
+        assert ret ==  None
+        assert buffer._data == bytearray(testData)
+        assert len(buffer._requests) == 1
+        assert buffer._requests[-1] == [bytearray(testData), False]
+
+
+    def test_readFrom_OneRead_OneEmptyRead_proxyToServer(self, createProxyTunnel):
+        pt, socketList = createProxyTunnel
+        buffer = pt._selectBufferForRead(socketList[2])
+        testData = b"testdata"
+        
+        socketList[3].sendall(testData)
+        socketList[3].close()
+        
+        ret = pt.readFrom(socketList[2])
+        assert ret == len(testData)
+        assert buffer._data == bytearray(testData)
+        assert len(buffer._requests) == 1
+        assert buffer._requests[-1] == [bytearray(testData), False]
+
+        ret = pt.readFrom(socketList[2])
+        assert ret ==  None
+        assert buffer._data == bytearray(testData)
+        assert len(buffer._requests) == 1
+        assert buffer._requests[-1] == [bytearray(testData), False]
+
+
+
     ## writeTo() tests
     ## - nonparticipating socket
     ## - no data in the buffer to read from
