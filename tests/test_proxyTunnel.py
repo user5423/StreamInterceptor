@@ -6,11 +6,13 @@ from typing import List, Tuple
 from aiohttp import ClientTimeout
 import pytest
 import socket
+import importlib
 
 sys.path.insert(0, os.path.join("..", "src"))
 sys.path.insert(0, "src")
 from tcp_proxyserver import ProxyTunnel
 from _proxyDS import Buffer
+import _exceptions
 
 ## TODO: At some point in the future we want to 
 ## perform UDP and TCP tests
@@ -37,9 +39,9 @@ class PTTestResources:
 
     @staticmethod
     def createClientSocket() -> socket.socket:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.setblocking(True)
-        return s
+        clientSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        clientSocket.setblocking(True)
+        return clientSocket
 
     @staticmethod
     def createServerSocket() -> socket.socket:
@@ -47,9 +49,9 @@ class PTTestResources:
         serverSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         ## NOTE: socket.bind(("",0)) passes response of PORT selection on localhost
         ## for binding to the host operating system
+        serverSocket.setblocking(True)
         serverSocket.bind(("", 0))
         serverSocket.listen()
-        serverSocket.setblocking(False)
         return serverSocket
 
     @staticmethod
@@ -66,7 +68,6 @@ class PTTestResources:
     def connect(client: socket.socket, server: socket.socket) -> socket.socket:
         serverHost, serverPort = server.getsockname()
         client.connect((serverHost, serverPort))
-        print("hello")
         ephemeralSocket, _ = server.accept()
         return ephemeralSocket
 
@@ -84,13 +85,29 @@ class PTTestResources:
 
         ## Rename the sockets
         clientToProxySocket = ephemeralProxyServerSocket
-        proxyToServerSocket = ephemeralServerSocket
+        proxyToServerSocket = proxyClientSocket
 
         ## Create ProxyTunnel
         streamInterceptor = PTTestResources.createMockStreamInterceptor()
         pt = ProxyTunnel(clientToProxySocket, proxyToServerSocket, streamInterceptor)
-        hopList = [clientSocket, clientToProxySocket, proxyToServerSocket, serverSocket]
+        hopList = [clientSocket, clientToProxySocket, proxyToServerSocket, ephemeralServerSocket]
         return pt, hopList
+
+    @staticmethod
+    def _closePT(socketList: List[socket.socket]) -> None:
+        for sock in socketList:
+            sock.close()
+
+
+## Fixtures
+@pytest.fixture(scope="function")
+def createProxyTunnel():
+    ## Create PT
+    pt, socketList = PTTestResources._setupPT()
+    yield pt, socketList
+
+    ## Close PT
+    PTTestResources._closePT(socketList)
 
 
 
@@ -168,6 +185,16 @@ class Test_ProxyTunnel_Init:
 
     
 
+class Test_ProxyTunnel_ByteOperations:
+    ## writeTo() tests
+    ## - nonparticipating socket
+    ## - no data in the buffer to read from
+    ## - send() returns 0
+    ## - send() doesn't return all data
+    ## - send() returns all data
+    ## - socket.error raised??
+    ...
+
 
 
 class Test_ProxyTunnel_HelperMethods:
@@ -176,20 +203,20 @@ class Test_ProxyTunnel_HelperMethods:
     ## Writing to a socket requires
     ## 1. reading from OPPOSITE buffer
     ## 2. writing to destination socket
-    def test_selectBufferForWrite_clientToProxy(self):
-        pt, _ = PTTestResources._setupPT()
+    def test_selectBufferForWrite_clientToProxy(self, createProxyTunnel):
+        pt, _ = createProxyTunnel
         b = pt._selectBufferForRead(pt.clientToProxySocket)
         assert b == pt.clientToServerBuffer
 
 
-    def test_selectBufferForWrite_proxyToClient(self):
-        pt, _ = PTTestResources._setupPT()
+    def test_selectBufferForWrite_proxyToClient(self, createProxyTunnel):
+        pt, _ = createProxyTunnel
         buffer = pt._selectBufferForRead(pt.proxyToServerSocket)
         assert buffer == pt.serverToClientBuffer
 
 
-    def test_selectBufferForWrite_IncorrectSocket(self):
-        pt, _ = PTTestResources._setupPT()
+    def test_selectBufferForWrite_IncorrectSocket(self, createProxyTunnel):
+        pt, _ = createProxyTunnel
         nonparticipatingSocket = PTTestResources.createClientSocket()
         with pytest.raises(Exception) as excInfo:
             pt._selectBufferForRead(nonparticipatingSocket)
@@ -199,18 +226,18 @@ class Test_ProxyTunnel_HelperMethods:
     ## Reading from a socket requires
     ## 1. reading from destination socket
     ## 2. writing to destination buffer
-    def test_selectBufferForWrite_clientToProxy(self):
-        pt, _ = PTTestResources._setupPT()
+    def test_selectBufferForWrite_clientToProxy(self, createProxyTunnel):
+        pt, _ = createProxyTunnel
         b = pt._selectBufferForRead(pt.clientToProxySocket)
         assert b == pt.serverToClientBuffer
 
-    def test_selectBufferForWrite_proxyToClient(self):
-        pt, _ = PTTestResources._setupPT()
+    def test_selectBufferForWrite_proxyToClient(self, createProxyTunnel):
+        pt, _ = createProxyTunnel
         b = pt._selectBufferForRead(pt.proxyToServerSocket)
         assert b == pt.clientToServerBuffer
 
-    def test_selectBufferForWrite_IncorrectSocket(self):
-        pt, _ = PTTestResources._setupPT()
+    def test_selectBufferForWrite_IncorrectSocket(self, createProxyTunnel):
+        pt, _ = createProxyTunnel
         nonparticipatingSocket = PTTestResources.createClientSocket()
         with pytest.raises(Exception) as excInfo:
             pt._selectBufferForRead(nonparticipatingSocket)
