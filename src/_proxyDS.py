@@ -146,9 +146,10 @@ class Buffer:
     def _execRequestParsing(self, chunk: bytearray) -> None:
         """This is a hook that executes whenever a new chunk has 
         been received"""
-        ## BUG: This hook doesn't pop from the b._data when it pops from b._request
-        ## --> This results in a memory leak 
-
+        ## BUG: There is still an opportunity for a race condition if `buffer.pop`
+        ## is called concurrently with the `buffer.write()` method
+        ## ==> This needs to be resolved
+        
         ## NOTE: In here, we are able to split up the streams/chunks into requests
 
         ## If a delimeter is greater than size 1, then it is possible that it is spread over
@@ -199,8 +200,6 @@ class Buffer:
         while len(self._requests) - 1:
             ## we pop the request from queue
             request, _ = self._requests.popleft()
-            ## we delete the bytes from b._data
-            self.pop(len(request))
             ## we execute the request hook
             self._requestHook(request)
 
@@ -210,8 +209,6 @@ class Buffer:
         if isDelimited:
             ## we pop the request from queue
             request, _ = self._requests.popleft()
-            ## we delete the bytes from b._data
-            self.pop(len(request))
             ## we execute the request hook
             self._requestHook(request)
 

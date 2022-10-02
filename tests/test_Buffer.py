@@ -282,9 +282,9 @@ class Test_Buffer_ByteOperations:
     
     
 
-    ## write() tests
+    ## write() tests (with stubbed _execRequestParsing)
     
-    def test_write_zeroBytes(self):
+    def test_write_stubbedParsing_zeroBytes(self):
         delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         b._execRequestParsing = lambda *args, **kwargs: None
@@ -294,8 +294,8 @@ class Test_Buffer_ByteOperations:
 
         assert b._data == testBytes
         assert len(b._requests) == 0
-        
-    def test_write_oneByte(self):
+
+    def test_write_stubbedParsing_oneByte(self):
         delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         b._execRequestParsing = lambda *args, **kwargs: None
@@ -306,7 +306,7 @@ class Test_Buffer_ByteOperations:
         assert len(b._data) == len(testBytes)
         assert len(b._requests) == 0
         
-    def test_write_manyBytes(self):
+    def test_write_stubbedParsing_manyBytes(self):
         delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         b._execRequestParsing = lambda *args, **kwargs: None
@@ -317,7 +317,7 @@ class Test_Buffer_ByteOperations:
         assert len(b._data) == len(testBytes)
         assert len(b._requests) == 0
 
-    def test_write_zeroBytes_nonEmptyBuffer(self):
+    def test_write_stubbedParsing_zeroBytes_nonEmptyBuffer(self):
         delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         b._execRequestParsing = lambda *args, **kwargs: None
@@ -329,7 +329,7 @@ class Test_Buffer_ByteOperations:
         assert b._data == bytearray(b"data")
         assert len(b._requests) == 0
 
-    def test_write_oneByte_nonEmptyBuffer(self):
+    def test_write_stubbedParsing_oneByte_nonEmptyBuffer(self):
         delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         b._execRequestParsing = lambda *args, **kwargs: None
@@ -341,7 +341,7 @@ class Test_Buffer_ByteOperations:
         assert b._data == bytearray(b"tdata")
         assert len(b._requests) == 0
 
-    def test_write_manyBytes_nonEmptyBuffer(self):
+    def test_write_stubbedParsing_manyBytes_nonEmptyBuffer(self):
         delimiters = [b"\r\n"]
         b = Buffer(delimiters)
         b._execRequestParsing = lambda *args, **kwargs: None
@@ -352,6 +352,7 @@ class Test_Buffer_ByteOperations:
 
         assert b._data == bytearray(bytearray(b"testdata"))
         assert len(b._requests) == 0
+
 
 
 
@@ -707,7 +708,7 @@ class Test_Buffer_RequestQueueOperations:
 
 
 
-class Test_Buffer_Hooks:
+class Test_Buffer_HookSetting:
     ## TODO:
     ## execWriteHook()
     ## setHook()
@@ -804,7 +805,7 @@ class Test_Buffer_RequestParsing:
         chunk = req1
         b.write(chunk)
 
-        assert b._data == bytearray(b"")
+        assert b._data == chunk
         assert len(b._requests) == 0
         
         assert len(queue) == 1
@@ -823,7 +824,7 @@ class Test_Buffer_RequestParsing:
         b.write(chunk)
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
-        assert b._data == req2
+        assert b._data == chunk
         assert len(b._requests) == 1
         assert b._requests[-1] == [req2, False]
         
@@ -843,7 +844,7 @@ class Test_Buffer_RequestParsing:
         b.write(chunk)
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
-        assert b._data == bytearray(b"")
+        assert b._data == chunk
         assert len(b._requests) == 0
         
         assert len(queue) == 2
@@ -864,7 +865,7 @@ class Test_Buffer_RequestParsing:
         b.write(chunk)
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
-        assert b._data == req3
+        assert b._data == chunk
         assert len(b._requests) == 1
         assert b._requests[-1] == [req3, False]
         
@@ -888,7 +889,7 @@ class Test_Buffer_RequestParsing:
         b.write(chunk)
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
-        assert b._data == bytearray(b"")
+        assert b._data == chunk
         assert len(b._requests) == 0
         
         assert len(queue) == 5
@@ -914,7 +915,7 @@ class Test_Buffer_RequestParsing:
         b.write(chunk)
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
-        assert b._data == req5
+        assert b._data == chunk
         assert len(b._requests) == 1
         assert b._requests[-1] == [req5, False]
         
@@ -938,7 +939,7 @@ class Test_Buffer_RequestParsing:
         b.write(chunk2)
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
-        assert b._data == bytearray(b"")
+        assert b._data == chunk1 + chunk2
         assert len(b._requests) == 0
         
         assert len(queue) == 2
@@ -958,7 +959,7 @@ class Test_Buffer_RequestParsing:
         b.write(chunk2)
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
-        assert b._data == bytearray(b"incompleteR")
+        assert b._data == chunk1 + chunk2
         assert len(b._requests) == 1
         assert b._requests[-1] == [bytearray(b"incompleteR"), False]
         
@@ -979,7 +980,7 @@ class Test_Buffer_RequestParsing:
         b.write(chunk2)
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
-        assert b._data == bytearray(b"")
+        assert b._data == chunk1 + chunk2
         assert len(b._requests) == 0
         
         assert len(queue) == 3
@@ -1000,7 +1001,7 @@ class Test_Buffer_RequestParsing:
         b.write(chunk2)
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
-        assert b._data == bytearray(b"incompleteR")
+        assert b._data == chunk1 + chunk2
         assert len(b._requests) == 1
         assert b._requests[-1] == [bytearray(b"incompleteR"), False]
         
@@ -1022,7 +1023,7 @@ class Test_Buffer_RequestParsing:
         b.write(chunk2)
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
-        assert b._data == bytearray(b"")
+        assert b._data == chunk1 + chunk2
         assert len(b._requests) == 0
         
         assert len(queue) == 5
@@ -1045,7 +1046,7 @@ class Test_Buffer_RequestParsing:
         b.write(chunk2)
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
-        assert b._data == bytearray(b"incompleteR")
+        assert b._data == chunk1 + chunk2
         assert len(b._requests) == 1
         assert b._requests[-1] == [bytearray(b"incompleteR"), False]
         
@@ -1070,7 +1071,7 @@ class Test_Buffer_RequestParsing:
         b.write(chunk2)
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
-        assert b._data == bytearray(b"")
+        assert b._data == chunk1 + chunk2
         assert len(b._requests) == 0
         
         assert len(queue) == 2
@@ -1090,7 +1091,7 @@ class Test_Buffer_RequestParsing:
         b.write(chunk2)
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
-        assert b._data == bytearray(b"incompleteR")
+        assert b._data == chunk1 + chunk2
         assert len(b._requests) == 1
         assert b._requests[-1] == [bytearray(b"incompleteR"), False]
         
@@ -1111,7 +1112,7 @@ class Test_Buffer_RequestParsing:
         b.write(chunk2)
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
-        assert b._data == bytearray(b"")
+        assert b._data == chunk1 + chunk2
         assert len(b._requests) == 0
         
         assert len(queue) == 3
@@ -1132,7 +1133,7 @@ class Test_Buffer_RequestParsing:
         b.write(chunk2)
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
-        assert b._data == bytearray(b"incompleteR")
+        assert b._data == chunk1 + chunk2
         assert len(b._requests) == 1
         assert b._requests[-1] == [bytearray(b"incompleteR"), False]
         
@@ -1154,7 +1155,7 @@ class Test_Buffer_RequestParsing:
         b.write(chunk2)
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
-        assert b._data == bytearray(b"")
+        assert b._data == chunk1 + chunk2
         assert len(b._requests) == 0
         
         assert len(queue) == 4
@@ -1176,7 +1177,7 @@ class Test_Buffer_RequestParsing:
         b.write(chunk2)
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
-        assert b._data == bytearray(b"incompleteR")
+        assert b._data == chunk1 + chunk2
         assert len(b._requests) == 1
         assert b._requests[-1] == [bytearray(b"incompleteR"), False]
         
@@ -1199,7 +1200,7 @@ class Test_Buffer_RequestParsing:
         b.write(chunk2)
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
-        assert b._data == bytearray(b"")
+        assert b._data == chunk1 + chunk2
         assert len(b._requests) == 0
         
         assert len(queue) == 6
@@ -1223,7 +1224,7 @@ class Test_Buffer_RequestParsing:
         b.write(chunk2)
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
-        assert b._data == bytearray(b"incompleteR")
+        assert b._data == chunk1 + chunk2
         assert len(b._requests) == 1
         assert b._requests[-1] == [bytearray(b"incompleteR"), False]
         
@@ -1253,7 +1254,7 @@ class Test_Buffer_RequestParsing:
         b.write(chunk2)
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
-        assert b._data == bytearray(b"")
+        assert b._data == chunk1 + chunk2
         assert len(b._requests) == 0
         
         assert len(queue) == 1
@@ -1272,7 +1273,7 @@ class Test_Buffer_RequestParsing:
         b.write(chunk2)
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
-        assert b._data == bytearray(b"")
+        assert b._data == chunk1 + chunk2
         assert len(b._requests) == 0
         
         assert len(queue) == 1
@@ -1291,7 +1292,7 @@ class Test_Buffer_RequestParsing:
         b.write(chunk2)
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
-        assert b._data == bytearray(b"incompleteR")
+        assert b._data == chunk1 + chunk2
         assert len(b._requests) == 1
         assert b._requests[-1] == [bytearray(b"incompleteR"), False]
         
@@ -1311,7 +1312,7 @@ class Test_Buffer_RequestParsing:
         b.write(chunk2)
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
-        assert b._data == bytearray(b"")
+        assert b._data == chunk1 + chunk2
         assert len(b._requests) == 0
         
         assert len(queue) == 2
@@ -1331,7 +1332,7 @@ class Test_Buffer_RequestParsing:
         b.write(chunk2)
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
-        assert b._data == bytearray(b"")
+        assert b._data == chunk1 + chunk2
         assert len(b._requests) == 0
         
         assert len(queue) == 1
@@ -1350,7 +1351,7 @@ class Test_Buffer_RequestParsing:
         b.write(chunk2)
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
-        assert b._data == bytearray(b"")
+        assert b._data == chunk1 + chunk2
         assert len(b._requests) == 0
         
         assert len(queue) == 1
@@ -1369,7 +1370,7 @@ class Test_Buffer_RequestParsing:
         b.write(chunk2)
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
-        assert b._data == bytearray(b"")
+        assert b._data == chunk1 + chunk2
         assert len(b._requests) == 0
         
         assert len(queue) == 1
