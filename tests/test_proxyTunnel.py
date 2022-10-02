@@ -1,12 +1,17 @@
 import collections
+import copy
 import os
 import sys
 import functools
+import types
 from typing import List, Tuple
 from aiohttp import ClientTimeout
 import pytest
 import socket
 import importlib
+
+from tests.temp import test
+
 
 sys.path.insert(0, os.path.join("..", "src"))
 sys.path.insert(0, "src")
@@ -109,6 +114,29 @@ def createProxyTunnel():
     ## Close PT
     PTTestResources._closePT(socketList)
 
+@pytest.fixture(scope="function")
+def createProxyTunnel_mockedSockets(createProxyTunnel):
+    pt, socketList = createProxyTunnel
+
+    class wrappedSocket:
+        def __init__(self, sock: socket.socket) -> None:
+            self.sock = sock
+
+        def send(self, bytes, *flags) -> None:
+            return self.sock.send(bytes[:len(bytes)//2])
+
+        def __getattr__(self, name):
+            return getattr(self.sock, name)
+
+        def __eq__(self, other):
+            return other == self.sock
+
+
+    socketList[1] = wrappedSocket(socketList[1])
+    socketList[2] = wrappedSocket(socketList[2])
+    return pt, socketList
+
+    
 
 
 class Test_ProxyTunnel_Init:
@@ -311,6 +339,10 @@ class Test_ProxyTunnel_ByteOperations:
         assert len(buffer._requests) == 1
         assert buffer._requests[-1] == [bytearray(testData), False]
 
+    ## TODO: Consider whether to add an exception test for socket.recv()
+    ## for the ProxyTunnel.readFrom method()
+
+
 
 
     ## writeTo() tests
@@ -320,8 +352,201 @@ class Test_ProxyTunnel_ByteOperations:
     ## - send() doesn't return all data
     ## - send() returns all data
     ## - socket.error raised??
-    ...
+    
+    def test_writeTo_nonparticipatingSocket(self, createProxyTunnel):
+        pt, _ = createProxyTunnel
+        nonparticipatingSocket = PTTestResources.createClientSocket()
 
+        with pytest.raises(Exception) as excInfo:
+            pt.writeTo(nonparticipatingSocket)
+        
+        assert "not associated with this tunnel" in str(excInfo.value)
+
+
+    def test_writeTo_noDataInBuffer_clientToProxy(self, createProxyTunnel):
+        pt, socketList = createProxyTunnel
+        socketList[0].setblocking(False)
+        buffer = pt._selectBufferForWrite(pt.clientToProxySocket)
+        
+        ## Buffer should be empty
+        ret = pt.writeTo(socketList[1])
+
+        ## Test whether recv() fails
+        with pytest.raises(socket.error) as excInfo:
+            socketList[0].recv(1024)
+        assert "unavailable" in str(excInfo.value)
+        assert ret == 0
+        assert buffer._data == bytearray(b"")
+        assert len(buffer._requests) == 0
+
+
+    def test_writeTo_noDataInBuffer_proxyToClient(self, createProxyTunnel):
+        pt, socketList = createProxyTunnel
+        socketList[3].setblocking(False)
+        buffer = pt._selectBufferForWrite(pt.clientToProxySocket)
+        
+        ## Buffer should be empty
+        ret = pt.writeTo(socketList[2])
+
+        ## Test whether recv() fails
+        with pytest.raises(socket.error) as excInfo:
+            socketList[3].recv(1024)
+        assert "unavailable" in str(excInfo.value)
+        assert ret == 0
+        assert buffer._data == bytearray(b"")
+        assert len(buffer._requests) == 0
+
+
+    def test_writeTo_zeroLengthReturned_clientToProxy(self):
+        ## This test case does not exist
+        ## --> If Zero is returned, that means the socket is
+        ## -- not available for WRITE_EVENT.
+        ## --> Since the socket.setblocking() has been set to false
+        ## -- this should return an ERROR instead of a 0 length return
+        ## NOTE: We can still mock this if we want to
+        ...
+
+    def test_writeTo_zeroLengthReturned_proxyToClient(self):
+        ## NOTE: See above
+        ...
+
+
+    def test_writeTo_exceedsRemoteMaxChunkSize_clientToProxy(self, createProxyTunnel):
+        pt, socketList = createProxyTunnel
+        socketList[0].setblocking(False)
+        socketList[1].setblocking(False)
+        buffer = pt._selectBufferForWrite(socketList[1])
+        
+        testdata = bytearray(b"testdata")
+        buffer.write(testdata)
+        ret = pt.writeTo(socketList[1])
+        assert ret == len(testdata)
+
+        ## First recv()
+        ret = socketList[0].recv(len(testdata)//2)
+        assert ret == testdata[:len(testdata)//2]
+        assert buffer._data == ret[len(testdata)//2:]
+        assert len(buffer._requests) == 1
+        assert buffer._requests[-1] == [testdata, False]
+
+        ## Second recv()
+        ret = socketList[0].recv(len(testdata)//2)
+        assert ret == testdata[len(testdata)//2:]
+        assert buffer._data == bytearray(b"")
+        assert len(buffer._requests) == 1
+        assert buffer._requests[-1] == [testdata, False]
+
+
+    def test_writeTo_exceedsRemoteMaxChunkSize_proxyToClient(self, createProxyTunnel):
+        pt, socketList = createProxyTunnel
+        socketList[3].setblocking(False)
+        socketList[2].setblocking(False)
+        buffer = pt._selectBufferForWrite(socketList[2])
+        
+        testdata = bytearray(b"testdata")
+        buffer.write(testdata)
+        ret = pt.writeTo(socketList[2])
+        assert ret == len(testdata)
+
+        ## First recv()
+        ret = socketList[3].recv(len(testdata)//2)
+        assert ret == testdata[:len(testdata)//2]
+        assert buffer._data == ret[len(testdata)//2:]
+        assert len(buffer._requests) == 1
+        assert buffer._requests[-1] == [testdata, False]
+
+        ## Second recv()
+        ret = socketList[3].recv(len(testdata)//2)
+        assert ret == testdata[len(testdata)//2:]
+        assert buffer._data == bytearray(b"")
+        assert len(buffer._requests) == 1
+        assert buffer._requests[-1] == [testdata, False]
+
+
+    def test_writeTo_PartialLengthReturned_clientToProxy(self, createProxyTunnel_mockedSockets):
+        pt, socketList = createProxyTunnel_mockedSockets
+
+        socketList[0].setblocking(False)
+        socketList[1].setblocking(False)
+        buffer = pt._selectBufferForWrite(socketList[1])
+
+        testdata = bytearray(b"testdata")
+        buffer.write(testdata)
+
+        ret1 = pt.writeTo(socketList[1])
+        assert ret1 == len(testdata)//2
+        assert buffer._data == testdata[len(testdata)//2:]
+        assert len(buffer._requests) == 1
+        assert buffer._requests[-1] == [testdata, False]
+
+        ret2 = socketList[0].recv(1024)
+        assert len(ret2) == len(testdata) - ret1
+        assert bytearray(ret2) == testdata[:len(testdata)//2]
+
+
+    def test_writeTo_PartialLengthReturned_proxyToClient(self, createProxyTunnel_mockedSockets):
+        pt, socketList = createProxyTunnel_mockedSockets
+
+        socketList[0].setblocking(False)
+        socketList[1].setblocking(False)
+        buffer = pt._selectBufferForWrite(socketList[2])
+
+        testdata = bytearray(b"testdata")
+        buffer.write(testdata)
+
+        ret1 = pt.writeTo(socketList[2])
+        assert ret1 == len(testdata)//2
+        assert buffer._data == testdata[len(testdata)//2:]
+        assert len(buffer._requests) == 1
+        assert buffer._requests[-1] == [testdata, False]
+
+        ret2 = socketList[3].recv(1024)
+        assert len(ret2) == len(testdata) - ret1
+        assert bytearray(ret2) == testdata[:len(testdata)//2]
+
+
+    def test_writeTo_BufferLengthReturned_clientToProxy(self, createProxyTunnel):
+        pt, socketList = createProxyTunnel
+        testdata = bytearray(b"testdata")
+        buffer = pt._selectBufferForWrite(socketList[1])
+        buffer.write(testdata)
+
+        ret1 = pt.writeTo(socketList[1])
+        assert ret1 == len(testdata)        
+        assert buffer._data == bytearray(b"")
+        assert len(buffer._requests) == 1
+        assert buffer._requests[-1] == [testdata, False]
+
+        ret2 = socketList[0].recv(1024)
+        assert bytearray(ret2) == testdata
+
+    def test_writeTo_BufferLengthReturned_proxyToServer(self, createProxyTunnel):
+        pt, socketList = createProxyTunnel
+        testdata = bytearray(b"testdata")
+        buffer = pt._selectBufferForWrite(socketList[2])
+        buffer.write(testdata)
+
+        ret1 = pt.writeTo(socketList[2])
+        assert ret1 == len(testdata)        
+        assert buffer._data == bytearray(b"")
+        assert len(buffer._requests) == 1
+        assert buffer._requests[-1] == [testdata, False]
+
+        ret2 = socketList[3].recv(1024)
+        assert bytearray(ret2) == testdata
+
+    def test_writeTo_SocketError_clientToProxy(self, createProxyTunnel):
+        ## TODO: We need to evaluate the documentation for potential
+        ## exceptions that recv and send can result in (especially
+        ## depending on if the socket is non blocking)
+        ## TODO: This should be reflected in 
+        ## -- `test_readFrom_SocketError_*` tests`
+        pt, socketList = createProxyTunnel
+        raise NotImplementedError()
+
+    def test_writeTo_SocketError_ClientToProxy(self):
+        ## TODO: See above
+        raise NotImplementedError()
 
 
 class Test_ProxyTunnel_HelperMethods:
