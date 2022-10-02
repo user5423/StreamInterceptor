@@ -136,7 +136,34 @@ def createProxyTunnel_mockedSockets(createProxyTunnel):
     socketList[2] = wrappedSocket(socketList[2])
     return pt, socketList
 
+@pytest.fixture(scope="function")
+def createProxyTunnel_mockedErrorSockets(createProxyTunnel):
+    pt, socketList = createProxyTunnel
+
+    class wrappedSocket:
+        def __init__(self, sock: socket.socket) -> None:
+            self.sock = sock
+            self.exception = OSError
+
+        def send(self, bytes, *flags) -> None:
+            raise self.exception()
+
+        def recv(self, chunk_size, *flags) -> None:
+            raise self.exception()
+
+        def __getattr__(self, name):
+            return getattr(self.sock, name)
+
+        def __eq__(self, other):
+            return other == self.sock
+
+
+    socketList[1] = wrappedSocket(socketList[1])
+    socketList[2] = wrappedSocket(socketList[2])
+    return pt, socketList
+
     
+
 
 
 class Test_ProxyTunnel_Init:
@@ -339,10 +366,28 @@ class Test_ProxyTunnel_ByteOperations:
         assert len(buffer._requests) == 1
         assert buffer._requests[-1] == [bytearray(testData), False]
 
-    ## TODO: Consider whether to add an exception test for socket.recv()
-    ## for the ProxyTunnel.readFrom method()
+    ## TODO: Add additional socket error tests (after some interactions)
+    def test_readFrom_SocketError_clientToProxy(self, createProxyTunnel_mockedErrorSockets):
+        pt, socketList = createProxyTunnel_mockedErrorSockets
+        testdata = bytearray(b"testdata")
+        buffer = pt._selectBufferForRead(socketList[1])
+        socketList[0].sendall(testdata)
 
+        ret1 = pt.readFrom(socketList[1])
+        assert ret1 == None
+        assert buffer._data == bytearray(b"")
+        assert len(buffer._requests) == 0
 
+    def test_readFrom_SocketError_proxyToServer(self, createProxyTunnel_mockedErrorSockets):
+        pt, socketList = createProxyTunnel_mockedErrorSockets
+        testdata = bytearray(b"testdata")
+        buffer = pt._selectBufferForRead(socketList[2])
+        socketList[3].sendall(testdata)
+
+        ret1 = pt.readFrom(socketList[2])
+        assert ret1 == None
+        assert buffer._data == bytearray(b"")
+        assert len(buffer._requests) == 0
 
 
     ## writeTo() tests
@@ -535,18 +580,29 @@ class Test_ProxyTunnel_ByteOperations:
         ret2 = socketList[3].recv(1024)
         assert bytearray(ret2) == testdata
 
-    def test_writeTo_SocketError_clientToProxy(self, createProxyTunnel):
-        ## TODO: We need to evaluate the documentation for potential
-        ## exceptions that recv and send can result in (especially
-        ## depending on if the socket is non blocking)
-        ## TODO: This should be reflected in 
-        ## -- `test_readFrom_SocketError_*` tests`
-        pt, socketList = createProxyTunnel
-        raise NotImplementedError()
+    def test_writeTo_SocketError_clientToProxy(self, createProxyTunnel_mockedErrorSockets):
+        pt, socketList = createProxyTunnel_mockedErrorSockets
+        testdata = bytearray(b"testdata")
+        buffer = pt._selectBufferForWrite(socketList[1])
+        buffer.write(testdata)
 
-    def test_writeTo_SocketError_ClientToProxy(self):
-        ## TODO: See above
-        raise NotImplementedError()
+        ret1 = pt.writeTo(socketList[1])
+        assert ret1 == None
+        assert buffer._data == testdata
+        assert len(buffer._requests) == 1
+        assert buffer._requests[-1] == [testdata, False]
+
+    def test_writeTo_SocketError_proxyToClient(self, createProxyTunnel_mockedErrorSockets):
+        pt, socketList = createProxyTunnel_mockedErrorSockets
+        testdata = bytearray(b"testdata")
+        buffer = pt._selectBufferForWrite(socketList[2])
+        buffer.write(testdata)
+
+        ret1 = pt.writeTo(socketList[2])
+        assert ret1 == None
+        assert buffer._data == testdata
+        assert len(buffer._requests) == 1
+        assert buffer._requests[-1] == [testdata, False]
 
 
 class Test_ProxyTunnel_HelperMethods:
