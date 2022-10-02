@@ -287,7 +287,7 @@ class Test_Buffer_ByteOperations:
     def test_write_zeroBytes(self):
         delimiters = [b"\r\n"]
         b = Buffer(delimiters)
-        b.execWriteHook = lambda *args, **kwargs: None
+        b._execRequestParsing = lambda *args, **kwargs: None
 
         testBytes = b""
         b.write(testBytes)
@@ -298,7 +298,7 @@ class Test_Buffer_ByteOperations:
     def test_write_oneByte(self):
         delimiters = [b"\r\n"]
         b = Buffer(delimiters)
-        b.execWriteHook = lambda *args, **kwargs: None
+        b._execRequestParsing = lambda *args, **kwargs: None
 
         testBytes = b"t"
         b.write(testBytes)
@@ -309,7 +309,7 @@ class Test_Buffer_ByteOperations:
     def test_write_manyBytes(self):
         delimiters = [b"\r\n"]
         b = Buffer(delimiters)
-        b.execWriteHook = lambda *args, **kwargs: None
+        b._execRequestParsing = lambda *args, **kwargs: None
 
         testBytes = bytearray(b"testdata")
         b.write(testBytes)
@@ -320,7 +320,7 @@ class Test_Buffer_ByteOperations:
     def test_write_zeroBytes_nonEmptyBuffer(self):
         delimiters = [b"\r\n"]
         b = Buffer(delimiters)
-        b.execWriteHook = lambda *args, **kwargs: None
+        b._execRequestParsing = lambda *args, **kwargs: None
 
         b._data += b""
         testBytes = b"data"
@@ -332,7 +332,7 @@ class Test_Buffer_ByteOperations:
     def test_write_oneByte_nonEmptyBuffer(self):
         delimiters = [b"\r\n"]
         b = Buffer(delimiters)
-        b.execWriteHook = lambda *args, **kwargs: None
+        b._execRequestParsing = lambda *args, **kwargs: None
 
         b._data += b"t"
         testBytes = b"data"
@@ -344,7 +344,7 @@ class Test_Buffer_ByteOperations:
     def test_write_manyBytes_nonEmptyBuffer(self):
         delimiters = [b"\r\n"]
         b = Buffer(delimiters)
-        b.execWriteHook = lambda *args, **kwargs: None
+        b._execRequestParsing = lambda *args, **kwargs: None
 
         b._data += b"test"
         testBytes = b"data"
@@ -360,7 +360,7 @@ class Test_Buffer_RequestQueueOperations:
     def test_peakFromQueue_empty(self):
         delimiters = [b"\r\n"]
         b = Buffer(delimiters)
-        b.execWriteHook = lambda *args, **kwargs: None
+        b._execRequestParsing = lambda *args, **kwargs: None
 
         with pytest.raises(IndexError) as excInfo:
             b.peakFromQueue()
@@ -373,65 +373,77 @@ class Test_Buffer_RequestQueueOperations:
     def test_peakFromQueue_singleUndelimited(self):
         delimiters = [b"\r\n"]
         b = Buffer(delimiters)
-        b.execWriteHook = lambda *args, **kwargs: None
+        b._execRequestParsing = lambda *args, **kwargs: None
 
-        request = [bytearray(b"testdata"), False]
-        b._requests.append(request)
+        req1 = bytearray(b"testdata")
+        b._requests.append([req1, False])
+        b._data = req1
 
-        assert request == b.peakFromQueue()
-        assert len(b._data) == 0
         assert len(b._requests) == 1
+        assert b.peakFromQueue() == [req1, False]
+        assert b._data == req1
 
     def test_peakFromQueue_singleDelimited(self):
         delimiters = [b"\r\n"]
         b = Buffer(delimiters)
-        b.execWriteHook = lambda *args, **kwargs: None
+        b._execRequestParsing = lambda *args, **kwargs: None
 
-        request = [bytearray(b"testdata"), True]
-        b._requests.append(request)
+        req1 = bytearray(b"testdata\r\n")
+        b._requests.append([req1, True])
+        b._data = req1
 
-        assert request == b.peakFromQueue()
-        assert len(b._data) == 0
         assert len(b._requests) == 1
+        assert b.peakFromQueue() == [req1, True]
+        assert b._data == req1
 
 
     def test_peakFromQueue_manyUndelimited(self):
+        ## The Queue should not be used in this way when calling public methods
+        ## -- but we want as much test coverage on internal state hence the below
         delimiters = [b"\r\n"]
         b = Buffer(delimiters)
-        b.execWriteHook = lambda *args, **kwargs: None
+        b._execRequestParsing = lambda *args, **kwargs: None
 
-        b._requests.append([bytearray(b"testdata1"), True])
-        b._requests.append([bytearray(b"testdata2"), True])
-        b._requests.append([bytearray(b"testdata3"), True])
-        request = [bytearray(b"testdata"), False]
-        b._requests.append(request)
+        req1 = bytearray(b"testdata1")
+        req2 = bytearray(b"testdata2")
+        req3 = bytearray(b"testdata3")
+        req4 = bytearray(b"testdata4")
+        b._requests.append([req1, False])
+        b._requests.append([req2, False])
+        b._requests.append([req3, False])
+        b._requests.append([req4, False])
+        b._data = req1 + req2 + req3 + req4
 
-        assert request == b.peakFromQueue()
-        assert len(b._data) == 0
         assert len(b._requests) == 4
+        assert b.peakFromQueue() == [req4, False]
+        assert b._data == req1 + req2 + req3 + req4
 
 
     def test_peakFromQueue_manyDelimited(self):
         delimiters = [b"\r\n"]
         b = Buffer(delimiters)
-        b.execWriteHook = lambda *args, **kwargs: None
+        b._execRequestParsing = lambda *args, **kwargs: None
 
-        b._requests.append([bytearray(b"testdata1"), True])
-        b._requests.append([bytearray(b"testdata2"), True])
-        b._requests.append([bytearray(b"testdata3"), True])
-        request = [bytearray(b"testdata"), True]
-        b._requests.append(request)
+        req1 = bytearray(b"testdata1\r\n")
+        req2 = bytearray(b"testdata2\r\n")
+        req3 = bytearray(b"testdata3\r\n")
+        req4 = bytearray(b"testdata4\r\n")
+        b._requests.append([req1, True])
+        b._requests.append([req2, True])
+        b._requests.append([req3, True])
+        b._requests.append([req4, True])
+        b._data = req1 + req2 + req3 + req4
 
-        assert request == b.peakFromQueue()
-        assert len(b._data) == 0
         assert len(b._requests) == 4
+        assert b.peakFromQueue() == [req4, True]
+        assert b._data == req1 + req2 + req3 + req4
 
 
     ## pushToQueue()
     def test_pushToQueue_empty_Undelimited(self):
         delimiters = [b"\r\n"]
         b = Buffer(delimiters)
-        b.execWriteHook = lambda *args, **kwargs: None
+        b._execRequestParsing = lambda *args, **kwargs: None
 
         request = [bytearray(b"testdata"), False]
         b.pushToQueue(*request)
@@ -444,7 +456,7 @@ class Test_Buffer_RequestQueueOperations:
     def test_pushToQueue_empty_Delimited(self):
         delimiters = [b"\r\n"]
         b = Buffer(delimiters)
-        b.execWriteHook = lambda *args, **kwargs: None
+        b._execRequestParsing = lambda *args, **kwargs: None
 
         request = [bytearray(b"testdata"), True]
         b.pushToQueue(*request)
@@ -457,7 +469,7 @@ class Test_Buffer_RequestQueueOperations:
     def test_pushToQueue_single_PrevUndelimited_CurrentDelimited(self):
         delimiters = [b"\r\n"]
         b = Buffer(delimiters)
-        b.execWriteHook = lambda *args, **kwargs: None
+        b._execRequestParsing = lambda *args, **kwargs: None
 
         request1 = [bytearray(b"testdata1"), False]
         request2 = [bytearray(b"testdata2"), True]
@@ -472,7 +484,7 @@ class Test_Buffer_RequestQueueOperations:
     def test_pushToQueue_single_PrevUndelimited_CurrentUndelimited(self):
         delimiters = [b"\r\n"]
         b = Buffer(delimiters)
-        b.execWriteHook = lambda *args, **kwargs: None
+        b._execRequestParsing = lambda *args, **kwargs: None
 
         request1 = [bytearray(b"testdata1"), False]
         request2 = [bytearray(b"testdata2"), False]
@@ -487,7 +499,7 @@ class Test_Buffer_RequestQueueOperations:
     def test_pushToQueue_single_PrevDelimited_currentUndelimited(self):
         delimiters = [b"\r\n"]
         b = Buffer(delimiters)
-        b.execWriteHook = lambda *args, **kwargs: None
+        b._execRequestParsing = lambda *args, **kwargs: None
 
         request1 = [bytearray(b"testdata1"), True]
         request2 = [bytearray(b"testdata2"), False]
@@ -503,7 +515,7 @@ class Test_Buffer_RequestQueueOperations:
     def test_pushToQueue_single_PrevDelimited_currentDelimited(self):
         delimiters = [b"\r\n"]
         b = Buffer(delimiters)
-        b.execWriteHook = lambda *args, **kwargs: None
+        b._execRequestParsing = lambda *args, **kwargs: None
 
         request1 = [bytearray(b"testdata1"), True]
         request2 = [bytearray(b"testdata2"), True]
@@ -519,7 +531,7 @@ class Test_Buffer_RequestQueueOperations:
     def test_pushToQueue_many_prevDelimited_currentDelimited(self):
         delimiters = [b"\r\n"]
         b = Buffer(delimiters)
-        b.execWriteHook = lambda *args, **kwargs: None
+        b._execRequestParsing = lambda *args, **kwargs: None
 
         request1 = [bytearray(b"testdata1"), True]
         request2 = [bytearray(b"testdata2"), True]
@@ -540,7 +552,7 @@ class Test_Buffer_RequestQueueOperations:
     def test_pushToQueue_many_prevDelimited_currentUndelimited(self):
         delimiters = [b"\r\n"]
         b = Buffer(delimiters)
-        b.execWriteHook = lambda *args, **kwargs: None
+        b._execRequestParsing = lambda *args, **kwargs: None
 
         request1 = [bytearray(b"testdata1"), True]
         request2 = [bytearray(b"testdata2"), True]
@@ -562,7 +574,7 @@ class Test_Buffer_RequestQueueOperations:
     def test_pushToQueue_many_prevUndelimited_currentUndelimited(self):
         delimiters = [b"\r\n"]
         b = Buffer(delimiters)
-        b.execWriteHook = lambda *args, **kwargs: None
+        b._execRequestParsing = lambda *args, **kwargs: None
 
         request1 = [bytearray(b"testdata1"), True]
         request2 = [bytearray(b"testdata2"), True]
@@ -582,7 +594,7 @@ class Test_Buffer_RequestQueueOperations:
     def test_pushToQueue_many_prevUndelimited_currentDelimited(self):
         delimiters = [b"\r\n"]
         b = Buffer(delimiters)
-        b.execWriteHook = lambda *args, **kwargs: None
+        b._execRequestParsing = lambda *args, **kwargs: None
 
         request1 = [bytearray(b"testdata1"), True]
         request2 = [bytearray(b"testdata2"), True]
@@ -604,7 +616,7 @@ class Test_Buffer_RequestQueueOperations:
     def test_popFromQueue_empty(self):
         delimiters = [b"\r\n"]
         b = Buffer(delimiters)
-        b.execWriteHook = lambda *args, **kwargs: None
+        b._execRequestParsing = lambda *args, **kwargs: None
 
         with pytest.raises(IndexError) as excInfo:
             b.popFromQueue()
@@ -617,7 +629,7 @@ class Test_Buffer_RequestQueueOperations:
     def test_popFromQueue_single_Undelimited(self):
         delimiters = [b"\r\n"]
         b = Buffer(delimiters)
-        b.execWriteHook = lambda *args, **kwargs: None
+        b._execRequestParsing = lambda *args, **kwargs: None
 
         request = [bytearray(b"testdata"), False]
         b.pushToQueue(*request)
@@ -633,7 +645,7 @@ class Test_Buffer_RequestQueueOperations:
     def test_popFromQueue_single_Delimited(self):
         delimiters = [b"\r\n"]
         b = Buffer(delimiters)
-        b.execWriteHook = lambda *args, **kwargs: None
+        b._execRequestParsing = lambda *args, **kwargs: None
         
         request = [bytearray(b"testdata"), True]
         b.pushToQueue(*request)
@@ -645,7 +657,7 @@ class Test_Buffer_RequestQueueOperations:
     def test_popFromQueue_many_Undelimited(self):
         delimiters = [b"\r\n"]
         b = Buffer(delimiters)
-        b.execWriteHook = lambda *args, **kwargs: None
+        b._execRequestParsing = lambda *args, **kwargs: None
         
         request1 = [bytearray(b"testdata1"), True]
         request2 = [bytearray(b"testdata2"), True]
@@ -671,7 +683,7 @@ class Test_Buffer_RequestQueueOperations:
     def test_popFromQueue_many_Delimited(self):
         delimiters = [b"\r\n"]
         b = Buffer(delimiters)
-        b.execWriteHook = lambda *args, **kwargs: None
+        b._execRequestParsing = lambda *args, **kwargs: None
         
         request1 = [bytearray(b"testdata1"), True]
         request2 = [bytearray(b"testdata2"), True]
@@ -717,7 +729,7 @@ class Test_Buffer_Hooks:
         assert isRan == True
 
         isRan = False
-        b.execWriteHook(chunk)
+        b._execRequestParsing(chunk)
         assert isRan == True
 
     def test_defaultWriteHook(self):
