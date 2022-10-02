@@ -24,6 +24,18 @@ class ProxyInterceptor:
 ## - It needs to be **aware** of the higher-level layer 7 requests
 
 
+## NOTE: ERROR!!!!!
+## NOTE: WARNING!!!!
+## BUG: There exist methods that manipulate both buffer._data and buffer._requests
+## -- This should NOT be the case
+## TODO: Fix these instances
+## --> Request parsing related methods should not manipulate the buffer._data
+## NOTE: Additionally, it should not USE it
+## --> Other methods (e.g. in ProxyTunnel class) will manipulate it
+## Therefore there may be a race condition, where PT pops buffer._data
+## before user 
+## --> any data previous to the received argument chunk should not be retrieved
+## directly using buffer._data
 
 @dataclass
 class Buffer:
@@ -39,7 +51,9 @@ class Buffer:
         self.REQUEST_DELIMETER_REGEX: str = b"(" + b"|".join(self.REQUEST_DELIMITERS) + b")"
         self.MAX_DELIMETER_LENGTH = max([len(delimiter) for delimiter in self.REQUEST_DELIMITERS])
 
+
     def _validateDelimiters(self) -> None:
+        """Validates that the delimiters are a list of bytestrings"""
         if not isinstance(self.REQUEST_DELIMITERS, Sequence):
             raise TypeError(f"Incorrect type for Buffer().REQUEST_DELIMITERS - {type(self.REQUEST_DELIMITERS)}")
         
@@ -53,15 +67,20 @@ class Buffer:
         if len(set(self.REQUEST_DELIMITERS)) != len(self.REQUEST_DELIMITERS):
             raise ValueError(f"Duplicate request delimiters were detected in the argument REQUEST_DELIMITERS")
             
+        return None
     
     ############### Bytes Operations #######################
     def read(self, bytes: int = 0) -> bytes:
+        """This reads bytes from the intercepted data stream
+        `buffer()._data` (without popping)"""
         if bytes < 0:
             return self._data
         return self._data[:bytes]
 
 
     def pop(self, bytes: int = 0) -> bytes:
+        """This pops bytes from the intercepted data stream
+        buffer `buffer()._data` (from the left)"""
         if bytes < 0:
             bytes = len(self._data)
         ret = self.read(bytes)
@@ -70,21 +89,24 @@ class Buffer:
 
 
     def write(self, chunk: bytearray) -> None:
+        """Writes the received chunk to a intercepted data
+        stream buffer - `buffer()._data`"""
         self._data += chunk
-        self.execWriteHook(chunk)
-
-
-    def execWriteHook(self, chunk: bytearray) -> None:
-        return self._writeHook(chunk)
+        self._execRequestParsing(chunk)
 
 
     def setHook(self, hook: Callable[["Buffer", bytearray], None]) -> None:
+        """This binds a request hook which is executed whenever
+        a request is completely parsed from the request queue 
+        `buffer()._requests`"""
         ## TODO: Find a better way to bind the hook function to this self obj instance
         self._requestHook = functools.partial(hook, self)
         
 
     ############## Request Queue Operations ########################
     def pushToQueue(self, data: bytearray, delimited: bool) -> None:
+        """Pushes data as a currently parsed or a new request onto
+        the request queue `buffer()._requests`"""
         ## NOTE: Added copies in case bytearray "data" is used in other manipulation
         ## if the requests queue is empty
         if len(self._requests) == 0:
@@ -101,6 +123,8 @@ class Buffer:
         
 
     def popFromQueue(self) -> Tuple[bytearray, bool]:
+        """This pops a complete request from the bottom of the queue 
+        (if a complete request exists)"""
         if not len(self._requests):
             raise IndexError("Cannot pop a request from empty buffer._requests deque")
         elif self._requests[0][1] is False:
@@ -108,7 +132,10 @@ class Buffer:
 
         return self._requests.popleft()
 
+
     def peakFromQueue(self) -> Tuple[bytearray, bool]:
+        """This peaks the request (complete/incomplete) at the top of
+        the queue"""
         if not len(self._requests):
             raise IndexError("Cannot peak a request from empty buffer._requests deque")
         
@@ -116,8 +143,9 @@ class Buffer:
 
 
     ################## Write Hook  ######################
-    def _writeHook(self, chunk: bytearray) -> None:
-        """This is a hook that should execute whenever a new chunk has been received"""
+    def _execRequestParsing(self, chunk: bytearray) -> None:
+        """This is a hook that executes whenever a new chunk has 
+        been received"""
         ## BUG: This hook doesn't pop from the b._data when it pops from b._request
         ## --> This results in a memory leak 
 
