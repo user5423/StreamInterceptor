@@ -5,7 +5,7 @@ import signal
 import logging
 from datetime import datetime
 from dataclasses import dataclass, field
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 from _proxyDS import Buffer, proxyHandlerDescriptor, ProxyInterceptor
 ## TODO: Replace default exceptions with custom exceptions
@@ -17,7 +17,8 @@ from _proxyDS import Buffer, proxyHandlerDescriptor, ProxyInterceptor
 
 
 
-
+## BUG: Call to write() calls read() and calls to read() call write()
+## --> Results in infinite recursive loop
 @dataclass
 class ProxyTunnel:
     clientToProxySocket: socket.socket
@@ -25,70 +26,70 @@ class ProxyTunnel:
     streamInterceptor: ProxyInterceptor
     CHUNK_SIZE: int = field(default=1024)
 
-    clientToServerBuffer: Buffer = field(init=False, default_factory=Buffer)
-    serverToClientBuffer: Buffer = field(init=False, default_factory=Buffer)
-
     def __post_init__(self):
+        ## Initialize streamInterceptor
         self.streamInterceptor = self.streamInterceptor()
+        ## Setup Bidirectional Buffers
+        self.serverToClientBuffer = Buffer(self.streamInterceptor.REQUEST_DELIMITERS)
+        self.clientToServerBuffer = Buffer(self.streamInterceptor.REQUEST_DELIMITERS)
+        ## Set hooks on Bidirectional Buffers
         self.clientToServerBuffer.setHook(self.streamInterceptor.clientToServerHook)
         self.serverToClientBuffer.setHook(self.streamInterceptor.serverToClientHook)
 
-    def getDestination(self, source: socket.socket) -> socket.socket:
-        if self.clientToProxySocket == source:
-            return self.proxyToServerSocket
-        elif self.proxyToServerSocket == source:
-            return self.clientToProxySocket
-        else:
-            raise Exception("The socket provided is not associated with this tunnel")
 
-
-    def read(self, source: socket.socket) -> Optional[int]:
+    def readFrom(self, source: socket.socket) -> Optional[int]:
         ## Check if the source socket is associated with the tunnel
         if not (self.clientToProxySocket == source or self.proxyToServerSocket == source):
             raise Exception("The socket provided is not associated with this tunnel")
 
-        ## Read the source 
-        data = source.recv(1024)
-        if not data:
+        ## Read the source
+        try:
+            data = source.recv(1024)
+            if not data:
+                return None
+        except socket.error:
             return None
         
         ## Read it into the buffer
-        buffer = self._selectBufferToWrite(source)
+        buffer = self._selectBufferForRead(source)
         buffer.write(data)
         return len(data)
 
 
-    def write(self, destination: socket.socket) -> Optional[int]:
+    def writeTo(self, destination: socket.socket) -> Optional[int]:
         ## Check if the source socket is associated with the tunnel
         if not (self.clientToProxySocket == destination or self.proxyToServerSocket == destination):
             raise Exception("The socket provided is not associated with this tunnel")
 
         ## Read from the buffer and send it to destination socket
-        buffer = self._selectBufferToRead(destination)
+        buffer = self._selectBufferForWrite(destination)
         data = buffer.read(self.CHUNK_SIZE)
         
+        ## We try to send data via the destination socket
         try:
             bytesSent = destination.send(data, self.CHUNK_SIZE)
             buffer.pop(bytesSent)
             return bytesSent
-        except OSError:
+        except socket.error:
             return None
             
 
-    def _selectBufferToWrite(self, source: socket.socket) -> Buffer:
+    def _selectBufferForWrite(self, source: socket.socket) -> Buffer:
+        ## For WRITE, we read from the opposite Buffer and perform source.sendall()
         if self.clientToProxySocket == source:
-            return self.clientToServerBuffer
-        elif self.proxyToServerSocket == source:
             return self.serverToClientBuffer
+        elif self.proxyToServerSocket == source:
+            return self.clientToServerBuffer
         else:
             raise Exception("The socket provided is not associated with this tunnel")
 
 
-    def _selectBufferToRead(self, source: socket.socket) -> Buffer:
+    def _selectBufferForRead(self, source: socket.socket) -> Buffer:
+        ## For READ, we write to the source Buffer
         if self.clientToProxySocket == source:
-            return self.serverToClientBuffer
-        elif self.proxyToServerSocket == source:
             return self.clientToServerBuffer
+        elif self.proxyToServerSocket == source:
+            return self.serverToClientBuffer
         else:
             raise Exception("The socket provided is not associated with this tunnel")
 
@@ -151,8 +152,6 @@ class ProxyConnections:
         self.selector.unregister(proxyTunnel.proxyToServerSocket)
         del self._sock[proxyTunnel.proxyToServerSocket]
                 
-
-
 
     def closeAllTunnels(self) -> None:
         proxyTunnels = {tunnel for tunnel in self._sock.values}
