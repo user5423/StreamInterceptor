@@ -1,15 +1,18 @@
 import os
 import sys
+import socket
 from matplotlib import collections
 import pytest
 
 sys.path.insert(0, os.path.join("..", "src"))
 sys.path.insert(0, "src")
-from tcp_proxyserver import ProxyConnections
+from tcp_proxyserver import ProxyConnections, ProxyTunnel
 from _proxyDS import StreamInterceptor
 
 
 class MockStreamInterceptor(StreamInterceptor):
+    def __init__(self) -> None:
+        self.REQUEST_DELIMITERS = [b"\r\n"]
     def clientToServerHook(self, requestChunk: bytes, buffer: "Buffer") -> None:
         return None
 
@@ -176,7 +179,110 @@ class Test_ProxyConnections_Init:
         self._assertValidInitialization(pc, PROXY_HOST, PROXY_PORT)
 
 
+@pytest.fixture
+def createPC():
+    PROXY_HOST, PROXY_PORT = "127.0.0.1", 80
+    streamInterceptor = MockStreamInterceptor
+    pc = ProxyConnections(PROXY_HOST, PROXY_PORT, streamInterceptor)
+    return pc, PROXY_HOST, PROXY_PORT, streamInterceptor
 
 
+class Test_ProxyConnections_DSOperations:
+    ## NOTE: At the point of creation of ProxyTunnel
+    ## the sockets are bound and connected
+
+    def _createTunnel(self, server2=None, server4=None):
+        s1 = socket.socket()
+        server2 = socket.create_server(("127.0.0.1", 8888))
+        s1.connect(("127.0.0.1", 8888))
+        s2 = server2.accept()
+        server2.close()
+
+        s3 = socket.socket()
+        server4 = socket.create_server(("127.0.0.1", 8889))
+        s3.connect(("127.0.0.1", 8889))
+        s4 = server4.accept()
+        server4.close()
+
+        return s1, s2, s3, s4
+
+    def _closeSockets(self, *sockets):
+        for socket in sockets:
+            socket.close()
+
+    ## get() request
+    def test_get_noTunnelRegistered(self, createPC):
+        pc, PROXY_HOST, PROXY_PORT, streamInterceptor = createPC
+        s = socket.socket()
+        assert pc.get(s) == None
+        assert pc.PROXY_HOST == PROXY_HOST
+        assert pc.PROXY_PORT == PROXY_PORT
+        assert pc.streamInterceptor == streamInterceptor
+
+    def test_get_singleTunnelRegistered(self, createPC):
+        pc, PROXY_HOST, PROXY_PORT, streamInterceptor = createPC
+        s1, s2, s3, s4 = self._createTunnel()
+
+        try:
+            pt = ProxyTunnel(s2, s3, MockStreamInterceptor)
+            
+            pc._sock[s2] = pt
+            pc._sock[s3] = pt
+
+            assert pc.get(s2) == pt
+            assert pc.PROXY_HOST == PROXY_HOST
+            assert pc.PROXY_PORT == PROXY_PORT
+            assert pc.streamInterceptor == streamInterceptor
+        except Exception as e:
+            self._closeSockets(s1, s2, s3, s4)
+            raise e
+
+
+    def test_get_multipleTunnelsRegistered(self, createPC):
+        pc, PROXY_HOST, PROXY_PORT, streamInterceptor = createPC
+        
+        tunnelsNo = 5
+        socks = []
+        managedSocks = []
+        proxyTunnels = []
+        try:
+            s2, s4 = None, None
+            for _ in range(tunnelsNo):
+                s1, s2, s3, s4 = self._createTunnel(s2, s4)
+                pt = ProxyTunnel(s2, s3, MockStreamInterceptor)
+            
+                pc._sock[s2] = pt
+                pc._sock[s3] = pt
+
+                socks.extend([s1,s2,s3,s4])
+                managedSocks.extend([s2,s3])
+                proxyTunnels.append(pt)
+
+            assert len(managedSocks) == tunnelsNo * 2
+            for index, sock in enumerate(managedSocks):
+                pt = proxyTunnels[index//2]
+                assert pc.get(sock) == pt
+                assert pc.PROXY_HOST == PROXY_HOST
+                assert pc.PROXY_PORT == PROXY_PORT
+                assert pc.streamInterceptor == streamInterceptor
+
+        except Exception as e:
+            self._closeSockets(*socks)
+            raise e
+
+
+
+class Test_ProxyConnections_TunnelCreation:
+    ...
+
+class Test_ProxyConnections_TunnelClosure:
+    ...
+
+
+## TODO: Take a look at the method ProxyConnections.setupProxyToServerSocket
+## -- Should this be here??
+## Isn't the whole point of ProxyConnections to be a dict-like object
+## ==> Therefore it probably shouldn't handle connection setup
+## NOTE: Maybe move it over to TCPProxyServer class
     
 
