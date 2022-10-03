@@ -1,5 +1,6 @@
 import os
 import sys
+from matplotlib import collections
 import pytest
 
 sys.path.insert(0, os.path.join("..", "src"))
@@ -116,7 +117,6 @@ class Test_ProxyConnections_Init:
         self._assertValidInitialization(pc, PROXY_HOST, PROXY_PORT)
 
 
-
     # def test_proxyPort_incorrectType(self):
     #     raise NotImplementedError()
 
@@ -125,16 +125,56 @@ class Test_ProxyConnections_Init:
 
 
 
-    # def test_streamInterceptor_incorrectType(self):
-    #     raise NotImplementedError()
+    def test_streamInterceptor_baseClass(self):
+        PROXY_HOST, PROXY_PORT = "127.0.0.1", 80
+        streamInterceptor = StreamInterceptor
+        with pytest.raises(TypeError) as excInfo:
+            ProxyConnections(PROXY_HOST, PROXY_PORT, streamInterceptor)
+        assert "A subclass of StreamInterceptor is required" in str(excInfo.value)
 
+    def test_streamInterceptor_abstractSubclass_clientToServerHook(self):
+        ## NOTE: There are still incomplete methods that haven't been overriden
+        PROXY_HOST, PROXY_PORT = "127.0.0.1", 80
 
-    # def test_streamInterceptor_abstractBase(self):
-    #     raise NotImplementedError()
+        class StreamInterceptor_incompleteClientToServerHook(MockStreamInterceptor):
+            def __init__(self) -> None:
+                self.serverToClientChunks = collections.deque([])
 
+            def serverToClientHook(self, requestChunk: bytes, buffer: "Buffer") -> None:
+                self.serverToClientChunks.append(requestChunk)
 
-    # def test_streamInterceptor_subclass(self):
-    #     raise NotImplementedError()
+        streamInterceptor = StreamInterceptor
+        with pytest.raises(TypeError) as excInfo:
+            ProxyConnections(PROXY_HOST, PROXY_PORT, streamInterceptor)
+
+        assert "Incomplete subclass" in str(excInfo.value)
+        assert "clientToServerHook()" in str(excInfo.value)
+
+    def test_streamInterceptor_abstractSubclass_ServerToClientHook(self):
+        ## NOTE: There are still incomplete methods that haven't been overriden
+        PROXY_HOST, PROXY_PORT = "127.0.0.1", 80
+
+        class StreamInterceptor_incompleteServerToClientHook(MockStreamInterceptor):
+            def __init__(self) -> None:
+                self.clientToServerChunks = collections.deque([])
+
+            def clientToServerHook(self, requestChunk: bytes, buffer: "Buffer") -> None:
+                self.clientToServerChunks.append(requestChunk)
+
+        streamInterceptor = StreamInterceptor_incompleteServerToClientHook
+        with pytest.raises(TypeError) as excInfo:
+            ProxyConnections(PROXY_HOST, PROXY_PORT, streamInterceptor)
+
+        assert "Incomplete subclass" in str(excInfo.value)
+        assert "clientToServerHook()" in str(excInfo.value)
+
+    def test_streamInterceptor_completeSubclass(self):
+        ## NOTE: There are no incomplete request hooks
+        PROXY_HOST, PROXY_PORT = "127.0.0.1", 80
+        streamInterceptor = MockStreamInterceptor
+        pc = ProxyConnections(PROXY_HOST, PROXY_PORT, streamInterceptor)
+        self._assertValidInitialization(pc, PROXY_HOST, PROXY_PORT)
+
 
 
 
