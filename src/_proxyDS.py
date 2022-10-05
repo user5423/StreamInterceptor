@@ -10,7 +10,7 @@ proxyHandlerDescriptor = NamedTuple("ProxyHandlerData", [("PROXY_HOST", str), ("
 ## TODO: Use ABCs to create abstract class
 ## NOTE: We will subclass this for the Stream Interceptor
 ## NOTE: This should be performed on a per protocol basis!!!
-class ProxyInterceptor:
+class StreamInterceptor:
     ## NOTE: This needs to rewrite any requests to the real server
     def clientToServerHook(self, requestChunk: bytes, buffer: "Buffer") -> None:
         raise NotImplementedError
@@ -42,6 +42,7 @@ class Buffer:
     REQUEST_DELIMITERS: List[bytes] = field(init=True)
     _data: bytearray = field(init=False, default_factory=bytearray)
     _requests: deque = field(init=False, default_factory=deque)
+    _MAX_BUFFER_SIZE: int = 1024 * 128 ## 128Kb
 
     def __post_init__(self):
         # ## NOTE: We'll likely change the structure later

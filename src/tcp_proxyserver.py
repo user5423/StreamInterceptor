@@ -7,7 +7,7 @@ from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple
 
-from _proxyDS import Buffer, proxyHandlerDescriptor, ProxyInterceptor
+from _proxyDS import Buffer, proxyHandlerDescriptor, StreamInterceptor
 ## TODO: Replace default exceptions with custom exceptions
 ## TODO: Implement Context management for TCPProxyServer
 ## TODO: Evaluate and implement additional exception handling
@@ -19,12 +19,12 @@ from _proxyDS import Buffer, proxyHandlerDescriptor, ProxyInterceptor
 
 ## BUG: Call to write() calls read() and calls to read() call write()
 ## --> Results in infinite recursive loop
-@dataclass
+@dataclass(unsafe_hash=True)
 class ProxyTunnel:
     clientToProxySocket: socket.socket
     proxyToServerSocket: socket.socket
-    streamInterceptor: ProxyInterceptor
-    CHUNK_SIZE: int = field(default=1024)
+    streamInterceptor: StreamInterceptor
+    CHUNK_SIZE: int = field(default=1024, hash=None)
 
     def __post_init__(self):
         ## Initialize streamInterceptor
@@ -98,23 +98,16 @@ class ProxyTunnel:
 class ProxyConnections:
     PROXY_HOST: str = field(init=True)
     PROXY_PORT: int = field(init=True)
-    StreamInterceptor: ProxyInterceptor = field(init=True)
+    streamInterceptor: StreamInterceptor = field(init=True)
 
     _sock: Dict[socket.socket, ProxyTunnel] = field(init=False, default_factory=dict)
-    selector: selectors.BaseSelector = field(init=False)
-
+    selector: selectors.BaseSelector = field(init=False, default_factory=selectors.DefaultSelector)
 
     def get(self, sock: socket.socket) -> ProxyTunnel:
         return self._sock.get(sock)
 
-
-    def put(self, sock: int, proxyTunnel: ProxyTunnel) -> None:
-        self._sock[sock] = proxyTunnel
-
-
-    def len(self) -> int:
+    def __len__(self) -> int:
         return len(self._sock)
-
 
     ## TODO: We need to add methods for rewriting
     def createTunnel(self, clientToProxySocket: socket.socket, proxyToServerSocket: socket.socket) -> ProxyTunnel:
@@ -125,9 +118,9 @@ class ProxyConnections:
             raise Exception("The `proxyToServerSocket` is already registered with a tunnel")
 
         ## We then create a new proxyTunnel
-        proxyTunnel = ProxyTunnel(clientToProxySocket, proxyToServerSocket, self.StreamInterceptor)
-        self.put(clientToProxySocket, proxyTunnel)
-        self.put(proxyToServerSocket, proxyTunnel)
+        proxyTunnel = ProxyTunnel(clientToProxySocket, proxyToServerSocket, self.streamInterceptor)
+        self._sock[clientToProxySocket] = proxyTunnel
+        self._sock[proxyToServerSocket] = proxyTunnel
 
         ## We then register the associated sockets (so that they can be polled)
         self.selector.register(clientToProxySocket, selectors.EVENT_READ | selectors.EVENT_WRITE, data="connection")
@@ -138,7 +131,9 @@ class ProxyConnections:
 
     def closeTunnel(self, proxyTunnel: ProxyTunnel) -> None:
         ## NOTE: This method can be called by either the client or the server
-        proxyTunnel = self._sock[proxyTunnel.clientToProxySocket]
+        proxyTunnel = self._sock.get(proxyTunnel.clientToProxySocket)
+        if proxyTunnel is None:
+            raise KeyError(f"Cannot close ProxyTunnel that is not registered: {proxyTunnel}")
         
         ## Close and unregister the clientToProxySocket
         if not proxyTunnel.clientToProxySocket._closed:
@@ -154,7 +149,7 @@ class ProxyConnections:
                 
 
     def closeAllTunnels(self) -> None:
-        proxyTunnels = {tunnel for tunnel in self._sock.values}
+        proxyTunnels = {tunnel for tunnel in self._sock.values()}
         for tunnel in proxyTunnels:
             self.closeTunnel(tunnel)
 
@@ -174,7 +169,7 @@ class TCPProxyServer:
     PORT: int
     PROXY_HOST: str
     PROXY_PORT: int
-    StreamInterceptor: ProxyInterceptor
+    streamInterceptor: StreamInterceptor
 
     serverSocket: socket.socket = field(init=False, default=None)
     selector: selectors.BaseSelector = field(init=False)
@@ -189,8 +184,8 @@ class TCPProxyServer:
 
     def _setupDataStructures(self):
         ## TODO: Add argument for StreamInterception for ProxyConnections construction
-        self.proxyHandlerDescriptor = proxyHandlerDescriptor(self.PROXY_HOST, self.PROXY_PORT, self.StreamInterceptor)
-        self.proxyConnections = ProxyConnections(self.PROXY_HOST, self.PROXY_PORT, self.StreamInterceptor)
+        self.proxyHandlerDescriptor = proxyHandlerDescriptor(self.PROXY_HOST, self.PROXY_PORT, self.streamInterceptor)
+        self.proxyConnections = ProxyConnections(self.PROXY_HOST, self.PROXY_PORT, self.streamInterceptor)
 
 
     def _setupSignalHandlers(self):
@@ -311,8 +306,8 @@ class TCPProxyServer:
 def main():
     HOST, PORT = "0.0.0.0", 8080
     PROXY_HOST, PROXY_PORT = "127.0.0.1", 80
-    StreamInterceptor = HTTPProxyInterceptor
-    TPS = TCPProxyServer(HOST, PORT, PROXY_HOST, PROXY_PORT, StreamInterceptor)
+    streamInterceptor = StreamInterceptor
+    TPS = TCPProxyServer(HOST, PORT, PROXY_HOST, PROXY_PORT, streamInterceptor)
     TPS.run()
 
 
