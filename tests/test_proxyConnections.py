@@ -190,7 +190,7 @@ def createPC():
 
 
 
-class Test_ProxyConnections_DSOperations:
+class Test_ProxyConnections_operations:
     ## NOTE: At the point of creation of ProxyTunnel
     ## the sockets are bound and connected
 
@@ -563,12 +563,6 @@ class Test_ProxyConnections_DSOperations:
             raise e
 
     
-class Test_ProxyConnections_TunnelCreation:
-    ...
-
-class Test_ProxyConnections_TunnelClosure:
-    ...
-
 
 ## TODO: Take a look at the method ProxyConnections.setupProxyToServerSocket
 ## -- Should this be here??
