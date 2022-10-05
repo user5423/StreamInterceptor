@@ -191,17 +191,17 @@ class Test_ProxyConnections_DSOperations:
     ## NOTE: At the point of creation of ProxyTunnel
     ## the sockets are bound and connected
 
-    def _createTunnel(self, server2=None, server4=None):
+    def _createTunnel(self):
         s1 = socket.socket()
         server2 = socket.create_server(("127.0.0.1", 8888))
         s1.connect(("127.0.0.1", 8888))
-        s2 = server2.accept()
+        s2, _ = server2.accept()
         server2.close()
 
         s3 = socket.socket()
         server4 = socket.create_server(("127.0.0.1", 8889))
         s3.connect(("127.0.0.1", 8889))
-        s4 = server4.accept()
+        s4, _ = server4.accept()
         server4.close()
 
         return s1, s2, s3, s4
@@ -209,6 +209,15 @@ class Test_ProxyConnections_DSOperations:
     def _closeSockets(self, *sockets):
         for socket in sockets:
             socket.close()
+
+
+    def _createPT(self, pc, socks):
+        s1, s2, s3, s4 = self._createTunnel()
+        socks.extend([s1,s2,s3,s4])
+        pt = ProxyTunnel(s2, s3, MockStreamInterceptor)
+        pc._put(s2, pt)
+        pc._put(s3, pt)
+        return pt, s2, s3
 
     ## get() request
     def test_get_noTunnelRegistered(self, createPC):
@@ -237,7 +246,6 @@ class Test_ProxyConnections_DSOperations:
             self._closeSockets(s1, s2, s3, s4)
             raise e
 
-
     def test_get_multipleTunnelsRegistered(self, createPC):
         pc, PROXY_HOST, PROXY_PORT, streamInterceptor = createPC
         
@@ -246,9 +254,8 @@ class Test_ProxyConnections_DSOperations:
         managedSocks = []
         proxyTunnels = []
         try:
-            s2, s4 = None, None
             for _ in range(tunnelsNo):
-                s1, s2, s3, s4 = self._createTunnel(s2, s4)
+                s1, s2, s3, s4 = self._createTunnel()
                 pt = ProxyTunnel(s2, s3, MockStreamInterceptor)
             
                 pc._sock[s2] = pt
@@ -270,6 +277,125 @@ class Test_ProxyConnections_DSOperations:
             self._closeSockets(*socks)
             raise e
 
+
+
+    def test_createTunnel_noTunnelsRegistered(self, createPC):
+        pc, PROXY_HOST, PROXY_PORT, streamInterceptor = createPC
+        socks = []
+
+        try:
+            s1, s2, s3, s4 = self._createTunnel()
+            socks.extend([s1,s2,s3,s4])
+            pc.createTunnel(s2, s3)
+
+            assert len(pc._sock) == 2
+            assert pc.get(s2) == pc.get(s3)
+            assert pc.PROXY_HOST == PROXY_HOST
+            assert pc.PROXY_PORT == PROXY_PORT
+            assert pc.streamInterceptor == streamInterceptor
+        except Exception as e:
+            self._closeSockets(*socks)
+            raise e
+
+        
+
+    def test_createTunnel_singleTunnelRegistered(self, createPC):
+        pc, PROXY_HOST, PROXY_PORT, streamInterceptor = createPC
+        socks = []
+
+        try:
+            s1, s2, s3, s4 = self._createTunnel()
+            socks.extend([s1,s2,s3,s4])
+            pc.createTunnel(s2, s3)
+            assert pc.get(s2) == pc.get(s3)
+
+            s1, s2, s3, s4 = self._createTunnel()
+            socks.extend([s1,s2,s3,s4])
+            pc.createTunnel(s2, s3)
+            assert pc.get(s2) == pc.get(s3)
+
+            assert len(pc._sock) == 4
+            assert pc.PROXY_HOST == PROXY_HOST
+            assert pc.PROXY_PORT == PROXY_PORT
+            assert pc.streamInterceptor == streamInterceptor
+        except Exception as e:
+            self._closeSockets(*socks)
+            raise e
+
+
+    def test_createTunnel_multipleTunnelsRegistered(self, createPC):
+        pc, PROXY_HOST, PROXY_PORT, streamInterceptor = createPC
+        socks = []
+        tunnels = 10
+
+        try:
+            for _ in range(tunnels):
+                s1, s2, s3, s4 = self._createTunnel()
+                socks.extend([s1,s2,s3,s4])
+                pc.createTunnel(s2, s3)
+                assert pc.get(s2) == pc.get(s3)
+
+            assert len(pc._sock) == tunnels*2
+            assert pc.PROXY_HOST == PROXY_HOST
+            assert pc.PROXY_PORT == PROXY_PORT
+            assert pc.streamInterceptor == streamInterceptor
+        except Exception as e:
+            self._closeSockets(*socks)
+            raise e
+
+
+    def test_createTunnel_alreadyRegisteredSocket_clientToProxy(self, createPC):
+        pc, PROXY_HOST, PROXY_PORT, streamInterceptor = createPC
+        socks = []
+
+        try:
+            s1, s2, s3, s4 = self._createTunnel()
+            socks.extend([s1,s2,s3,s4])
+            pc.createTunnel(s2, s3)
+
+            s1, _, s3, s4 = self._createTunnel()
+            socks.extend([s1,s2,s3,s4])
+
+            with pytest.raises(AlreadyRegisteredSocket) as excInfo:
+                pc.createTunnel(s2, s3)
+
+            assert "already registered" in str(excInfo.value)
+            assert "clientToProxy" in str(excInfo.value)
+            
+            assert len(pc._sock) == 2
+            assert pc.PROXY_HOST == PROXY_HOST
+            assert pc.PROXY_PORT == PROXY_PORT
+            assert pc.streamInterceptor == streamInterceptor
+        except Exception as e:
+            self._closeSockets(*socks)
+            raise e
+
+
+    def test_createTunnel_alreadyRegisteredSocket_proxyToServer(self, createPC):
+        pc, PROXY_HOST, PROXY_PORT, streamInterceptor = createPC
+        socks = []
+
+        try:
+            s1, s2, s3, s4 = self._createTunnel()
+            socks.extend([s1,s2,s3,s4])
+            pc.createTunnel(s2, s3)
+
+            s1, s2, _, s4 = self._createTunnel()
+            socks.extend([s1,s2,s3,s4])
+
+            with pytest.raises(AlreadyRegisteredSocket) as excInfo:
+                pc.createTunnel(s2, s3)
+
+            assert "already registered" in str(excInfo.value)
+            assert "proxyToServer" in str(excInfo.value)
+            
+            assert len(pc._sock) == 2
+            assert pc.PROXY_HOST == PROXY_HOST
+            assert pc.PROXY_PORT == PROXY_PORT
+            assert pc.streamInterceptor == streamInterceptor
+        except Exception as e:
+            self._closeSockets(*socks)
+            raise e
 
 
 class Test_ProxyConnections_TunnelCreation:
