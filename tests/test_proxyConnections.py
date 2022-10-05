@@ -1,4 +1,6 @@
+from atexit import register
 import os
+import selectors
 import sys
 import socket
 from matplotlib import collections
@@ -187,6 +189,7 @@ def createPC():
     return pc, PROXY_HOST, PROXY_PORT, streamInterceptor
 
 
+
 class Test_ProxyConnections_DSOperations:
     ## NOTE: At the point of creation of ProxyTunnel
     ## the sockets are bound and connected
@@ -289,7 +292,9 @@ class Test_ProxyConnections_DSOperations:
             pc.createTunnel(s2, s3)
 
             assert len(pc._sock) == 2
+            assert len(pc.selector.get_map()) == 2
             assert pc.get(s2) == pc.get(s3)
+
             assert pc.PROXY_HOST == PROXY_HOST
             assert pc.PROXY_PORT == PROXY_PORT
             assert pc.streamInterceptor == streamInterceptor
@@ -301,20 +306,28 @@ class Test_ProxyConnections_DSOperations:
 
     def test_createTunnel_singleTunnelRegistered(self, createPC):
         pc, PROXY_HOST, PROXY_PORT, streamInterceptor = createPC
+        expectedSelectorEvent = selectors.EVENT_READ | selectors.EVENT_WRITE
         socks = []
 
         try:
             s1, s2, s3, s4 = self._createTunnel()
             socks.extend([s1,s2,s3,s4])
-            pc.createTunnel(s2, s3)
-            assert pc.get(s2) == pc.get(s3)
+            s1, s2_new, s3_new, s4 = self._createTunnel()
+            socks.extend([s1,s2_new,s3_new,s4])
 
-            s1, s2, s3, s4 = self._createTunnel()
-            socks.extend([s1,s2,s3,s4])
             pc.createTunnel(s2, s3)
-            assert pc.get(s2) == pc.get(s3)
+            pc.createTunnel(s2_new, s3_new)
 
             assert len(pc._sock) == 4
+            assert len(pc.selector.get_map()) == 4
+            assert pc.get(s2) == pc.get(s3)
+            assert pc.get(s2_new) == pc.get(s3_new)
+
+            for sock in (s2, s3, s2_new, s3_new):
+                selectorKey = pc.selector.get_key(sock)
+                assert selectorKey.data == "connection"
+                assert selectorKey.events == expectedSelectorEvent
+
             assert pc.PROXY_HOST == PROXY_HOST
             assert pc.PROXY_PORT == PROXY_PORT
             assert pc.streamInterceptor == streamInterceptor
@@ -325,17 +338,27 @@ class Test_ProxyConnections_DSOperations:
 
     def test_createTunnel_multipleTunnelsRegistered(self, createPC):
         pc, PROXY_HOST, PROXY_PORT, streamInterceptor = createPC
+        expectedSelectorEvent = selectors.EVENT_READ | selectors.EVENT_WRITE
         socks = []
+        registeredSocks = []
         tunnels = 10
 
         try:
             for _ in range(tunnels):
                 s1, s2, s3, s4 = self._createTunnel()
                 socks.extend([s1,s2,s3,s4])
+                registeredSocks.extend([s2,s3])
                 pc.createTunnel(s2, s3)
                 assert pc.get(s2) == pc.get(s3)
 
+            for sock in registeredSocks:
+                selectorKey = pc.selector.get_key(sock)
+                assert selectorKey.data == "connection"
+                assert selectorKey.events == expectedSelectorEvent
+
             assert len(pc._sock) == tunnels*2
+            assert len(pc.selector.get_map()) == tunnels*2
+
             assert pc.PROXY_HOST == PROXY_HOST
             assert pc.PROXY_PORT == PROXY_PORT
             assert pc.streamInterceptor == streamInterceptor
@@ -346,6 +369,7 @@ class Test_ProxyConnections_DSOperations:
 
     def test_createTunnel_alreadyRegisteredSocket_clientToProxy(self, createPC):
         pc, PROXY_HOST, PROXY_PORT, streamInterceptor = createPC
+        expectedSelectorEvent = selectors.EVENT_READ | selectors.EVENT_WRITE
         socks = []
 
         try:
@@ -353,16 +377,28 @@ class Test_ProxyConnections_DSOperations:
             socks.extend([s1,s2,s3,s4])
             pc.createTunnel(s2, s3)
 
-            s1, _, s3, s4 = self._createTunnel()
+            s1, _, s3_new, s4 = self._createTunnel()
             socks.extend([s1,s2,s3,s4])
 
             with pytest.raises(AlreadyRegisteredSocket) as excInfo:
-                pc.createTunnel(s2, s3)
+                pc.createTunnel(s2, s3_new)
 
             assert "already registered" in str(excInfo.value)
             assert "clientToProxy" in str(excInfo.value)
             
+            ## This should be registered in the original successful createTunnel call
+            for sock in (s2, s3):
+                selectorKey = pc.selector.get_key(sock)
+                assert selectorKey.data == "connection"
+                assert selectorKey.events == expectedSelectorEvent
+
+            ## Since createTunnel call failed, it should never register this socket
+            with pytest.raises(KeyError):
+                pc.selector.get_key(s3_new)
+
             assert len(pc._sock) == 2
+            assert len(pc.selector.get_map()) == 2
+
             assert pc.PROXY_HOST == PROXY_HOST
             assert pc.PROXY_PORT == PROXY_PORT
             assert pc.streamInterceptor == streamInterceptor
@@ -390,6 +426,8 @@ class Test_ProxyConnections_DSOperations:
             assert "proxyToServer" in str(excInfo.value)
             
             assert len(pc._sock) == 2
+            assert len(pc.selector.get_map()) == 2
+
             assert pc.PROXY_HOST == PROXY_HOST
             assert pc.PROXY_PORT == PROXY_PORT
             assert pc.streamInterceptor == streamInterceptor
@@ -397,7 +435,25 @@ class Test_ProxyConnections_DSOperations:
             self._closeSockets(*socks)
             raise e
 
+    def test_closeTunnel_noRegisteredTunnels(self):
+        ...
 
+    def test_closeTunnel_notRegistered(self):
+        ...
+
+    def test_closeTunnel_registered(self):
+        ...
+
+    def test_closeAllTunnels_noTunnel(self):
+        ...
+
+    def test_closeAllTunnels_singleTunnel(self):
+        ...
+
+    def test_closeAllTunnels_manyTunnels(self):
+        ...
+
+    
 class Test_ProxyConnections_TunnelCreation:
     ...
 
