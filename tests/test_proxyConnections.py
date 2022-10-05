@@ -289,7 +289,8 @@ class Test_ProxyConnections_DSOperations:
         try:
             s1, s2, s3, s4 = self._createTunnel()
             socks.extend([s1,s2,s3,s4])
-            pc.createTunnel(s2, s3)
+            pt = pc.createTunnel(s2, s3)
+            assert isinstance(pt, ProxyTunnel)
 
             assert len(pc._sock) == 2
             assert len(pc.selector.get_map()) == 2
@@ -315,8 +316,11 @@ class Test_ProxyConnections_DSOperations:
             s1, s2_new, s3_new, s4 = self._createTunnel()
             socks.extend([s1,s2_new,s3_new,s4])
 
-            pc.createTunnel(s2, s3)
-            pc.createTunnel(s2_new, s3_new)
+            pt = pc.createTunnel(s2, s3)
+            assert isinstance(pt, ProxyTunnel)
+
+            pt = pc.createTunnel(s2_new, s3_new)
+            assert isinstance(pt, ProxyTunnel)
 
             assert len(pc._sock) == 4
             assert len(pc.selector.get_map()) == 4
@@ -348,7 +352,8 @@ class Test_ProxyConnections_DSOperations:
                 s1, s2, s3, s4 = self._createTunnel()
                 socks.extend([s1,s2,s3,s4])
                 registeredSocks.extend([s2,s3])
-                pc.createTunnel(s2, s3)
+                pt = pc.createTunnel(s2, s3)
+                assert isinstance(pt, ProxyTunnel)
                 assert pc.get(s2) == pc.get(s3)
 
             for sock in registeredSocks:
@@ -435,23 +440,127 @@ class Test_ProxyConnections_DSOperations:
             self._closeSockets(*socks)
             raise e
 
-    def test_closeTunnel_noRegisteredTunnels(self):
-        ...
 
-    def test_closeTunnel_notRegistered(self):
-        ...
+    def test_closeTunnel_notRegisteredTunnel(self, createPC):
+        pc, PROXY_HOST, PROXY_PORT, streamInterceptor = createPC
+        socks = []
 
-    def test_closeTunnel_registered(self):
-        ...
+        try:
+            s1, s2, s3, s4 = self._createTunnel()
+            socks.extend([s1,s2,s3,s4])
+            pt = ProxyTunnel(s2, s3, streamInterceptor)
 
-    def test_closeAllTunnels_noTunnel(self):
-        ...
+            with pytest.raises(KeyError) as excInfo:
+                pc.closeTunnel(pt)
 
-    def test_closeAllTunnels_singleTunnel(self):
-        ...
+            assert "not registered" in str(excInfo.value)
+            assert "ProxyTunnel" in str(excInfo.value)
 
-    def test_closeAllTunnels_manyTunnels(self):
-        ...
+            assert len(pc._sock) == 0
+            assert len(pc.selector.get_map()) == 0
+
+            assert pc.PROXY_HOST == PROXY_HOST
+            assert pc.PROXY_PORT == PROXY_PORT
+            assert pc.streamInterceptor == streamInterceptor
+        except Exception as e:
+            self._closeSockets(*socks)
+            raise e
+
+    def test_closeTunnel_registeredTunnel(self, createPC):
+        pc, PROXY_HOST, PROXY_PORT, streamInterceptor = createPC
+        socks = []
+
+        try:
+            s1, s2, s3, s4 = self._createTunnel()
+            socks.extend([s1,s2,s3,s4])
+            pt = pc.createTunnel(s2, s3)
+
+            ret = pc.closeTunnel(pt)
+
+            assert ret is None
+            assert pt.clientToProxySocket not in pc._sock
+            assert pt.proxyToServerSocket not in pc._sock
+            
+            ## These sockets should be unregistered 
+            ## NOTE: The sockets are closed so attempting to get key
+            ## results in .get(fd=-1) which is invalid value
+            ## --> hence ValueError is raised instead of KeyError
+            for sock in (s2, s3):
+                with pytest.raises(ValueError):
+                    pc.selector.get_key(sock)
+
+            assert len(pc._sock) == 0
+            assert len(pc.selector.get_map()) == 0
+
+            assert pc.PROXY_HOST == PROXY_HOST
+            assert pc.PROXY_PORT == PROXY_PORT
+            assert pc.streamInterceptor == streamInterceptor
+            
+        except Exception as e:
+            self._closeSockets(*socks)
+            raise e
+
+    def test_closeAllTunnels_noTunnel(self, createPC):
+        pc, PROXY_HOST, PROXY_PORT, streamInterceptor = createPC
+        socks = []
+
+        try:
+            pc.closeAllTunnels()
+
+            assert len(pc._sock) == 0
+            assert len(pc.selector.get_map()) == 0
+
+            assert pc.PROXY_HOST == PROXY_HOST
+            assert pc.PROXY_PORT == PROXY_PORT
+            assert pc.streamInterceptor == streamInterceptor
+        except Exception as e:
+            self._closeSockets(*socks)
+            raise e
+
+    def test_closeAllTunnels_singleTunnel(self, createPC):
+        pc, PROXY_HOST, PROXY_PORT, streamInterceptor = createPC
+        socks = []
+
+        try:
+            s1, s2, s3, s4 = self._createTunnel()
+            socks.extend([s1,s2,s3,s4])
+            pc.createTunnel(s2,s3)
+
+            ret = pc.closeAllTunnels()
+
+            assert ret is None
+
+            assert len(pc._sock) == 0
+            assert len(pc.selector.get_map()) == 0
+
+            assert pc.PROXY_HOST == PROXY_HOST
+            assert pc.PROXY_PORT == PROXY_PORT
+            assert pc.streamInterceptor == streamInterceptor
+        except Exception as e:
+            self._closeSockets(*socks)
+            raise e
+
+    def test_closeAllTunnels_manyTunnels(self, createPC):
+        pc, PROXY_HOST, PROXY_PORT, streamInterceptor = createPC
+        socks = []
+        tunnels = 10
+        try:
+            for _ in range(tunnels):
+                s1, s2, s3, s4 = self._createTunnel()
+                socks.extend([s1,s2,s3,s4])
+                pc.createTunnel(s2,s3)
+
+            pc.closeAllTunnels()
+
+            assert len(pc._sock) == 0
+            assert len(pc.selector.get_map()) == 0
+
+            assert pc.PROXY_HOST == PROXY_HOST
+            assert pc.PROXY_PORT == PROXY_PORT
+            assert pc.streamInterceptor == streamInterceptor
+        except Exception as e:
+            self._closeSockets(*socks)
+            raise e
 
     
 class Test_ProxyConnections_TunnelCreation:
