@@ -1,4 +1,5 @@
 
+import ipaddress
 import selectors
 import socket
 import signal
@@ -8,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple
 
 from _proxyDS import Buffer, proxyHandlerDescriptor, StreamInterceptor
+from _exceptions import *
 ## TODO: Replace default exceptions with custom exceptions
 ## TODO: Implement Context management for TCPProxyServer
 ## TODO: Evaluate and implement additional exception handling
@@ -40,7 +42,7 @@ class ProxyTunnel:
     def readFrom(self, source: socket.socket) -> Optional[int]:
         ## Check if the source socket is associated with the tunnel
         if not (self.clientToProxySocket == source or self.proxyToServerSocket == source):
-            raise Exception("The socket provided is not associated with this tunnel")
+            raise UnassociatedTunnelSocket(self, socket)
 
         ## Read the source
         try:
@@ -59,7 +61,7 @@ class ProxyTunnel:
     def writeTo(self, destination: socket.socket) -> Optional[int]:
         ## Check if the source socket is associated with the tunnel
         if not (self.clientToProxySocket == destination or self.proxyToServerSocket == destination):
-            raise Exception("The socket provided is not associated with this tunnel")
+            raise UnassociatedTunnelSocket(self, socket)
 
         ## Read from the buffer and send it to destination socket
         buffer = self._selectBufferForWrite(destination)
@@ -81,7 +83,7 @@ class ProxyTunnel:
         elif self.proxyToServerSocket == source:
             return self.clientToServerBuffer
         else:
-            raise Exception("The socket provided is not associated with this tunnel")
+            raise UnassociatedTunnelSocket(self, socket)
 
 
     def _selectBufferForRead(self, source: socket.socket) -> Buffer:
@@ -91,7 +93,7 @@ class ProxyTunnel:
         elif self.proxyToServerSocket == source:
             return self.serverToClientBuffer
         else:
-            raise Exception("The socket provided is not associated with this tunnel")
+            raise UnassociatedTunnelSocket(self, socket)
 
 
 @dataclass
@@ -99,23 +101,46 @@ class ProxyConnections:
     PROXY_HOST: str = field(init=True)
     PROXY_PORT: int = field(init=True)
     streamInterceptor: StreamInterceptor = field(init=True)
-
-    _sock: Dict[socket.socket, ProxyTunnel] = field(init=False, default_factory=dict)
     selector: selectors.BaseSelector = field(init=False, default_factory=selectors.DefaultSelector)
 
-    def get(self, sock: socket.socket) -> ProxyTunnel:
-        return self._sock.get(sock)
+    _sock: Dict[socket.socket, ProxyTunnel] = field(init=False, default_factory=dict)
+
+    def __post_init__(self) -> None:
+        self._validateArgs()
+
+    def _validateArgs(self) -> None:
+        ## Validate host
+        ## -- Raises an exception if not a valid ip_address
+        addr = ipaddress.ip_address(self.PROXY_HOST)
+
+        ## Validate port
+        if not (isinstance(self.PROXY_PORT, int) and 0 < self.PROXY_PORT):
+            raise ValueError("Invalid PROXY_PORT arg for ProxyConnections instance")
+
+        ## Validate interceptor
+        if (StreamInterceptor not in self.streamInterceptor.__mro__):
+            raise TypeError("A subclass of StreamInterceptor is required for streamInterceptor \
+                arg for ProxyConnection.__init__() - No ancestor class was detected")
+        elif (StreamInterceptor == self.streamInterceptor.__mro__[0]):
+            raise TypeError("A subclass of StreamInterceptor is required for streamInterceptor \
+                arg for ProxyConnection.__init__() - Cannot use an instance of the abstract class")
+
+        ## NOTE: We'll be moving to ABC Meta class for StreamInterceptor abstract classes
+        ## --> Therefore the validation process and the corresponding pytest tests will likely change
 
     def __len__(self) -> int:
         return len(self._sock)
+
+    def get(self, sock: socket.socket) -> ProxyTunnel:
+        return self._sock.get(sock)
 
     ## TODO: We need to add methods for rewriting
     def createTunnel(self, clientToProxySocket: socket.socket, proxyToServerSocket: socket.socket) -> ProxyTunnel:
         ## Check if the sockets are registered with a pre-existing tunnel
         if self._sock.get(clientToProxySocket):
-            raise Exception("The `clientToProxySocket` is already registered with a tunnel")
+            raise AlreadyRegisteredSocketError("clientToProxySocket", clientToProxySocket, self)
         elif self._sock.get(proxyToServerSocket):
-            raise Exception("The `proxyToServerSocket` is already registered with a tunnel")
+            raise AlreadyRegisteredSocketError("proxyToServerSocket", proxyToServerSocket, self)
 
         ## We then create a new proxyTunnel
         proxyTunnel = ProxyTunnel(clientToProxySocket, proxyToServerSocket, self.streamInterceptor)
