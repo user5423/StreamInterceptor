@@ -7,7 +7,7 @@ import pytest
 sys.path.insert(0, os.path.join("..", "src"))
 sys.path.insert(0, "src")
 from _proxyDS import Buffer
-
+from _exceptions import *
 ## Buffer Initiatialization
 
 class Test_Buffer_Init:
@@ -353,6 +353,17 @@ class Test_Buffer_ByteOperations:
         assert b._data == bytearray(bytearray(b"testdata"))
         assert len(b._requests) == 0
 
+    def test_write_stubbedParsing_manyBytes_fullBuffer(self):
+        delimiters = [b"\r\n"]
+        b = Buffer(delimiters)
+        b._execRequestParsing = lambda *args, **kwargs: None
+
+        b._data += (b"A" * b._MAX_BUFFER_SIZE)
+        testBytes = b"data"
+        with pytest.raises(BufferOverflowError) as excInfo:
+            b.write(testBytes)
+
+        assert "exceeded max buffer size" in str(excInfo.value)
 
 
 
@@ -709,12 +720,6 @@ class Test_Buffer_RequestQueueOperations:
 
 
 class Test_Buffer_HookSetting:
-    ## TODO:
-    ## execWriteHook()
-    ## setHook()
-    ## _requestHook()
-    ## _writeHook()
-
     def test_hookSettingAndCalling(self):
         delimiters = [b"\r\n"]
         b = Buffer(delimiters)
@@ -733,11 +738,5 @@ class Test_Buffer_HookSetting:
         b._execRequestParsing(chunk)
         assert isRan == True
 
-    def test_defaultWriteHook(self):
-        raise NotImplementedError()
-
-    ## TODO: Test if write() method calls hook
-
-    ## TODO: Write methods for Buffer()._requestHook
 
  

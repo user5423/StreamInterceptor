@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.join("..", "src"))
 sys.path.insert(0, "src")
 from tcp_proxyserver import ProxyConnections, ProxyTunnel
 from _proxyDS import StreamInterceptor
+from _exceptions import *
 
 
 class MockStreamInterceptor(StreamInterceptor):
@@ -45,7 +46,6 @@ class Test_ProxyConnections_Init:
             ProxyConnections(PROXY_HOST, PROXY_PORT, interceptor)
         
         assert "does not appear to be an IPv4 or IPv6 address" in str(excInfo.value)
-        raise NotImplementedError()
 
     def test_proxyHost_invalidIPv4(self):
         PROXY_HOST, PROXY_PORT = "8.8.8", 80 ## Missing octect from address
@@ -385,7 +385,7 @@ class Test_ProxyConnections_operations:
             s1, _, s3_new, s4 = self._createTunnel()
             socks.extend([s1,s2,s3,s4])
 
-            with pytest.raises(AlreadyRegisteredSocket) as excInfo:
+            with pytest.raises(AlreadyRegisteredSocketError) as excInfo:
                 pc.createTunnel(s2, s3_new)
 
             assert "already registered" in str(excInfo.value)
@@ -424,7 +424,7 @@ class Test_ProxyConnections_operations:
             s1, s2, _, s4 = self._createTunnel()
             socks.extend([s1,s2,s3,s4])
 
-            with pytest.raises(AlreadyRegisteredSocket) as excInfo:
+            with pytest.raises(AlreadyRegisteredSocketError) as excInfo:
                 pc.createTunnel(s2, s3)
 
             assert "already registered" in str(excInfo.value)
