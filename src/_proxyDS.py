@@ -4,6 +4,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Callable, Iterable, List, NamedTuple, Sequence, Tuple
 
+from _exceptions import *
 proxyHandlerDescriptor = NamedTuple("ProxyHandlerData", [("PROXY_HOST", str), ("PROXY_PORT", int), ("StreamInterceptor", object)])
 
 
@@ -56,17 +57,17 @@ class Buffer:
     def _validateDelimiters(self) -> None:
         """Validates that the delimiters are a list of bytestrings"""
         if not isinstance(self.REQUEST_DELIMITERS, Sequence):
-            raise TypeError(f"Incorrect type for Buffer().REQUEST_DELIMITERS - {type(self.REQUEST_DELIMITERS)}")
-        
+            raise IncorrectDelimitersTypeError(self.REQUEST_DELIMITERS)
+
         if len(self.REQUEST_DELIMITERS) == 0:
-            raise ValueError("Cannot pass empty REQUEST_DELIMITERS argument")
+            raise EmptyDelimiterTypeError(self.REQUEST_DELIMITERS)
         
         for delimiter in self.REQUEST_DELIMITERS:
             if not isinstance(delimiter, bytes):
-                raise TypeError(f"Incorrect type for Buffer().REQUEST_DELIMITERS[i] - {type(delimiter)}")
+                raise IncorrectDelimiterTypeErrpr(delimiter)
             
         if len(set(self.REQUEST_DELIMITERS)) != len(self.REQUEST_DELIMITERS):
-            raise ValueError(f"Duplicate request delimiters were detected in the argument REQUEST_DELIMITERS")
+            raise DuplicateDelimitersError(self.REQUEST_DELIMITERS)
             
         return None
     
@@ -127,8 +128,10 @@ class Buffer:
         """This pops a complete request from the bottom of the queue 
         (if a complete request exists)"""
         if not len(self._requests):
+            raise PopFromEmptyQueueError()
             raise IndexError("Cannot pop a request from empty buffer._requests deque")
         elif self._requests[0][1] is False:
+            raise PopUndelimitedItemInQueueError()
             raise ValueError("Cannot pop a request from undelimited buffer._requests deque")
 
         return self._requests.popleft()
@@ -138,6 +141,7 @@ class Buffer:
         """This peaks the request (complete/incomplete) at the top of
         the queue"""
         if not len(self._requests):
+            raise PeakFromEmptyQueueError()
             raise IndexError("Cannot peak a request from empty buffer._requests deque")
         
         return self._requests[-1]
