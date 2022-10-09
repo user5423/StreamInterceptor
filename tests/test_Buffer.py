@@ -21,7 +21,7 @@ class Test_Buffer_Init:
         
     def test_RequestDelimiters_incorrectType(self) -> None:
         REQUEST_DELIMITERS = None
-        with pytest.raises(TypeError) as excInfo:
+        with pytest.raises(IncorrectDelimitersTypeError) as excInfo:
             Buffer(REQUEST_DELIMITERS)
             
         assert "Incorrect type" in str(excInfo.value)
@@ -30,7 +30,7 @@ class Test_Buffer_Init:
         
     def test_RequestDelimeters_empty(self) -> None:
         REQUEST_DELIMITERS = []
-        with pytest.raises(ValueError) as excInfo:
+        with pytest.raises(EmptyDelimitersTypeError) as excInfo:
             Buffer(REQUEST_DELIMITERS)
             
         assert "Cannot pass empty" in str(excInfo.value)
@@ -58,7 +58,7 @@ class Test_Buffer_Init:
     def test_RequestDelimiters_duplicate(self) -> None:
         ## NOTE: Duplicates delimitesr are bad practice
         REQUEST_DELIMITERS = [b"\r\n", b"\r", b"\r\n"]
-        with pytest.raises(ValueError) as excInfo:
+        with pytest.raises(DuplicateDelimitersError) as excInfo:
             Buffer(REQUEST_DELIMITERS)
         
         assert "Duplicate" in str(excInfo.value)
@@ -374,7 +374,7 @@ class Test_Buffer_RequestQueueOperations:
         b = Buffer(delimiters)
         b._execRequestParsing = lambda *args, **kwargs: None
 
-        with pytest.raises(IndexError) as excInfo:
+        with pytest.raises(PeakFromEmptyQueueError) as excInfo:
             b.peakFromQueue()
 
         assert "Cannot peak" in str(excInfo.value)
@@ -630,7 +630,7 @@ class Test_Buffer_RequestQueueOperations:
         b = Buffer(delimiters)
         b._execRequestParsing = lambda *args, **kwargs: None
 
-        with pytest.raises(IndexError) as excInfo:
+        with pytest.raises(PopFromEmptyQueueError) as excInfo:
             b.popFromQueue()
 
         assert "Cannot pop" in str(excInfo.value)
@@ -646,7 +646,7 @@ class Test_Buffer_RequestQueueOperations:
         request = [bytearray(b"testdata"), False]
         b.pushToQueue(*request)
 
-        with pytest.raises(ValueError) as excInfo:
+        with pytest.raises(PopUndelimitedItemFromQueueError) as excInfo:
             b.popFromQueue()
 
         assert "Cannot pop" in str(excInfo.value)
@@ -684,7 +684,7 @@ class Test_Buffer_RequestQueueOperations:
         assert b.popFromQueue() == request2
         assert b.popFromQueue() == request3
 
-        with pytest.raises(ValueError) as excInfo:
+        with pytest.raises(PopUndelimitedItemFromQueueError) as excInfo:
             b.popFromQueue()
 
         assert "Cannot pop" in str(excInfo.value)
