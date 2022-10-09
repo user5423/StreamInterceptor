@@ -115,17 +115,15 @@ class ProxyConnections:
 
         ## Validate port
         if not (isinstance(self.PROXY_PORT, int) and 0 < self.PROXY_PORT):
-            raise ValueError("Invalid PROXY_PORT arg for ProxyConnections instance")
+            raise InvalidProxyPortError(self.PROXY_PORT)
 
         ## Validate interceptor
         if (StreamInterceptor not in self.streamInterceptor.__mro__):
-            raise TypeError("A subclass of StreamInterceptor is required for streamInterceptor \
-                arg for ProxyConnection.__init__() - No ancestor class was detected")
+            raise AbsentStreamInterceptorParentError(self.streamInterceptor)
         elif (StreamInterceptor == self.streamInterceptor.__mro__[0]):
-            raise TypeError("A subclass of StreamInterceptor is required for streamInterceptor \
-                arg for ProxyConnection.__init__() - Cannot use an instance of the abstract class")
+            raise AbstractStreamInterceptorError(self.streamInterceptor)
 
-        ## NOTE: We'll be moving to ABC Meta class for StreamInterceptor abstract classes
+        ## TODO: We'll be moving to ABC Meta class for StreamInterceptor abstract classes
         ## --> Therefore the validation process and the corresponding pytest tests will likely change
 
     def __len__(self) -> int:
@@ -158,7 +156,7 @@ class ProxyConnections:
         ## NOTE: This method can be called by either the client or the server
         proxyTunnel = self._sock.get(proxyTunnel.clientToProxySocket)
         if proxyTunnel is None:
-            raise KeyError(f"Cannot close ProxyTunnel that is not registered: {proxyTunnel}")
+            raise UnregisteredProxyTunnelError(self, proxyTunnel)
         
         ## Close and unregister the clientToProxySocket
         if not proxyTunnel.clientToProxySocket._closed:

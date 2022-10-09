@@ -133,7 +133,7 @@ class Test_ProxyConnections_Init:
     def test_streamInterceptor_baseClass(self):
         PROXY_HOST, PROXY_PORT = "127.0.0.1", 80
         streamInterceptor = StreamInterceptor
-        with pytest.raises(TypeError) as excInfo:
+        with pytest.raises(AbstractStreamInterceptorError) as excInfo:
             ProxyConnections(PROXY_HOST, PROXY_PORT, streamInterceptor)
         assert "A subclass of StreamInterceptor is required" in str(excInfo.value)
 
@@ -398,7 +398,7 @@ class Test_ProxyConnections_operations:
                 assert selectorKey.events == expectedSelectorEvent
 
             ## Since createTunnel call failed, it should never register this socket
-            with pytest.raises(KeyError):
+            with pytest.raises(UnregisteredProxyTunnelError):
                 pc.selector.get_key(s3_new)
 
             assert len(pc._sock) == 2
