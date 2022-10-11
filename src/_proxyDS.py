@@ -60,7 +60,7 @@ class Buffer:
             raise IncorrectDelimitersTypeError(self.REQUEST_DELIMITERS)
 
         if len(self.REQUEST_DELIMITERS) == 0:
-            raise EmptyDelimiterTypeError(self.REQUEST_DELIMITERS)
+            raise EmptyDelimitersTypeError(self.REQUEST_DELIMITERS)
         
         for delimiter in self.REQUEST_DELIMITERS:
             if not isinstance(delimiter, bytes):
@@ -129,10 +129,8 @@ class Buffer:
         (if a complete request exists)"""
         if not len(self._requests):
             raise PopFromEmptyQueueError()
-            raise IndexError("Cannot pop a request from empty buffer._requests deque")
         elif self._requests[0][1] is False:
-            raise PopUndelimitedItemInQueueError()
-            raise ValueError("Cannot pop a request from undelimited buffer._requests deque")
+            raise PopUndelimitedItemFromQueueError()
 
         return self._requests.popleft()
 
@@ -142,7 +140,6 @@ class Buffer:
         the queue"""
         if not len(self._requests):
             raise PeakFromEmptyQueueError()
-            raise IndexError("Cannot peak a request from empty buffer._requests deque")
         
         return self._requests[-1]
 

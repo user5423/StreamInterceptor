@@ -148,7 +148,7 @@ class Test_ProxyConnections_Init:
             def serverToClientHook(self, requestChunk: bytes, buffer: "Buffer") -> None:
                 self.serverToClientChunks.append(requestChunk)
 
-        streamInterceptor = StreamInterceptor
+        streamInterceptor = StreamInterceptor_incompleteClientToServerHook
         with pytest.raises(TypeError) as excInfo:
             ProxyConnections(PROXY_HOST, PROXY_PORT, streamInterceptor)
 

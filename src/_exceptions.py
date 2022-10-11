@@ -57,7 +57,7 @@ class IncorrectDelimitersTypeError(TypeError):
         self.msg = f"Incorrect type for Buffer().REQUEST_DELIMITERS - {type(REQUEST_DELIMITERS)}"
         super().__init__(self.msg)
 
-class EmptyDelimiterTypeError(ValueError):
+class EmptyDelimitersTypeError(ValueError):
     def __init__(self, REQUEST_DELIMITERS):
         self.msg = F"Cannot pass empty REQUEST_DELIMITERS argument - {REQUEST_DELIMITERS}"
         super().__init__(self.msg)
@@ -77,7 +77,7 @@ class PopFromEmptyQueueError(IndexError):
         self.msg = "Cannot pop a request from empty buffer._requests deque"
         super().__init__(self.msg)
 
-class PopUndelimitedItemInQueueError(ValueError):
+class PopUndelimitedItemFromQueueError(ValueError):
     def __init__(self):
         self.msg = "Cannot pop a request from undelimited buffer._requests deque"
         super().__init__(self.msg)

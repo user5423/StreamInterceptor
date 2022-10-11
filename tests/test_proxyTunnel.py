@@ -402,7 +402,7 @@ class Test_ProxyTunnel_ByteOperations:
         pt, _ = createProxyTunnel
         nonparticipatingSocket = PTTestResources.createClientSocket()
 
-        with pytest.raises(Exception) as excInfo:
+        with pytest.raises(UnassociatedTunnelSocket) as excInfo:
             pt.writeTo(nonparticipatingSocket)
         
         assert "not associated with the ProxyTunnel" in str(excInfo.value)
@@ -626,7 +626,7 @@ class Test_ProxyTunnel_HelperMethods:
     def test_selectBufferForWrite_IncorrectSocket(self, createProxyTunnel):
         pt, _ = createProxyTunnel
         nonparticipatingSocket = PTTestResources.createClientSocket()
-        with pytest.raises(Exception) as excInfo:
+        with pytest.raises(UnassociatedTunnelSocket) as excInfo:
             pt._selectBufferForRead(nonparticipatingSocket)
         assert "not associated with the ProxyTunnel" in str(excInfo.value)
 
@@ -647,6 +647,6 @@ class Test_ProxyTunnel_HelperMethods:
     def test_selectBufferForWrite_IncorrectSocket(self, createProxyTunnel):
         pt, _ = createProxyTunnel
         nonparticipatingSocket = PTTestResources.createClientSocket()
-        with pytest.raises(Exception) as excInfo:
+        with pytest.raises(UnassociatedTunnelSocket) as excInfo:
             pt._selectBufferForRead(nonparticipatingSocket)
         assert "not associated with the ProxyTunnel" in str(excInfo.value)
