@@ -1,4 +1,5 @@
 
+import ipaddress
 import selectors
 import socket
 import signal
@@ -7,7 +8,8 @@ from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple
 
-from _proxyDS import Buffer, proxyHandlerDescriptor, ProxyInterceptor
+from _proxyDS import Buffer, proxyHandlerDescriptor, StreamInterceptor
+from _exceptions import *
 ## TODO: Replace default exceptions with custom exceptions
 ## TODO: Implement Context management for TCPProxyServer
 ## TODO: Evaluate and implement additional exception handling
@@ -19,12 +21,12 @@ from _proxyDS import Buffer, proxyHandlerDescriptor, ProxyInterceptor
 
 ## BUG: Call to write() calls read() and calls to read() call write()
 ## --> Results in infinite recursive loop
-@dataclass
+@dataclass(unsafe_hash=True)
 class ProxyTunnel:
     clientToProxySocket: socket.socket
     proxyToServerSocket: socket.socket
-    streamInterceptor: ProxyInterceptor
-    CHUNK_SIZE: int = field(default=1024)
+    streamInterceptor: StreamInterceptor
+    CHUNK_SIZE: int = field(default=1024, hash=None)
 
     def __post_init__(self):
         ## Initialize streamInterceptor
@@ -40,7 +42,7 @@ class ProxyTunnel:
     def readFrom(self, source: socket.socket) -> Optional[int]:
         ## Check if the source socket is associated with the tunnel
         if not (self.clientToProxySocket == source or self.proxyToServerSocket == source):
-            raise Exception("The socket provided is not associated with this tunnel")
+            raise UnassociatedTunnelSocket(self, socket)
 
         ## Read the source
         try:
@@ -59,7 +61,7 @@ class ProxyTunnel:
     def writeTo(self, destination: socket.socket) -> Optional[int]:
         ## Check if the source socket is associated with the tunnel
         if not (self.clientToProxySocket == destination or self.proxyToServerSocket == destination):
-            raise Exception("The socket provided is not associated with this tunnel")
+            raise UnassociatedTunnelSocket(self, socket)
 
         ## Read from the buffer and send it to destination socket
         buffer = self._selectBufferForWrite(destination)
@@ -81,7 +83,7 @@ class ProxyTunnel:
         elif self.proxyToServerSocket == source:
             return self.clientToServerBuffer
         else:
-            raise Exception("The socket provided is not associated with this tunnel")
+            raise UnassociatedTunnelSocket(self, socket)
 
 
     def _selectBufferForRead(self, source: socket.socket) -> Buffer:
@@ -91,43 +93,57 @@ class ProxyTunnel:
         elif self.proxyToServerSocket == source:
             return self.serverToClientBuffer
         else:
-            raise Exception("The socket provided is not associated with this tunnel")
+            raise UnassociatedTunnelSocket(self, socket)
 
 
 @dataclass
 class ProxyConnections:
     PROXY_HOST: str = field(init=True)
     PROXY_PORT: int = field(init=True)
-    StreamInterceptor: ProxyInterceptor = field(init=True)
+    streamInterceptor: StreamInterceptor = field(init=True)
+    selector: selectors.BaseSelector = field(init=False, default_factory=selectors.DefaultSelector)
 
     _sock: Dict[socket.socket, ProxyTunnel] = field(init=False, default_factory=dict)
-    selector: selectors.BaseSelector = field(init=False)
 
+    def __post_init__(self) -> None:
+        self._validateArgs()
+
+    def _validateArgs(self) -> None:
+        ## Validate host
+        ## -- Raises an exception if not a valid ip_address
+        addr = ipaddress.ip_address(self.PROXY_HOST)
+
+        ## Validate port
+        if not (isinstance(self.PROXY_PORT, int) and 0 < self.PROXY_PORT):
+            raise InvalidProxyPortError(self.PROXY_PORT)
+
+        ## Validate interceptor
+        if (StreamInterceptor not in self.streamInterceptor.__mro__):
+            raise AbsentStreamInterceptorParentError(self.streamInterceptor)
+        elif (StreamInterceptor == self.streamInterceptor.__mro__[0]):
+            raise AbstractStreamInterceptorError(self.streamInterceptor)
+
+        ## TODO: We'll be moving to ABC Meta class for StreamInterceptor abstract classes
+        ## --> Therefore the validation process and the corresponding pytest tests will likely change
+
+    def __len__(self) -> int:
+        return len(self._sock)
 
     def get(self, sock: socket.socket) -> ProxyTunnel:
         return self._sock.get(sock)
-
-
-    def put(self, sock: int, proxyTunnel: ProxyTunnel) -> None:
-        self._sock[sock] = proxyTunnel
-
-
-    def len(self) -> int:
-        return len(self._sock)
-
 
     ## TODO: We need to add methods for rewriting
     def createTunnel(self, clientToProxySocket: socket.socket, proxyToServerSocket: socket.socket) -> ProxyTunnel:
         ## Check if the sockets are registered with a pre-existing tunnel
         if self._sock.get(clientToProxySocket):
-            raise Exception("The `clientToProxySocket` is already registered with a tunnel")
+            raise AlreadyRegisteredSocketError("clientToProxySocket", clientToProxySocket, self)
         elif self._sock.get(proxyToServerSocket):
-            raise Exception("The `proxyToServerSocket` is already registered with a tunnel")
+            raise AlreadyRegisteredSocketError("proxyToServerSocket", proxyToServerSocket, self)
 
         ## We then create a new proxyTunnel
-        proxyTunnel = ProxyTunnel(clientToProxySocket, proxyToServerSocket, self.StreamInterceptor)
-        self.put(clientToProxySocket, proxyTunnel)
-        self.put(proxyToServerSocket, proxyTunnel)
+        proxyTunnel = ProxyTunnel(clientToProxySocket, proxyToServerSocket, self.streamInterceptor)
+        self._sock[clientToProxySocket] = proxyTunnel
+        self._sock[proxyToServerSocket] = proxyTunnel
 
         ## We then register the associated sockets (so that they can be polled)
         self.selector.register(clientToProxySocket, selectors.EVENT_READ | selectors.EVENT_WRITE, data="connection")
@@ -138,7 +154,9 @@ class ProxyConnections:
 
     def closeTunnel(self, proxyTunnel: ProxyTunnel) -> None:
         ## NOTE: This method can be called by either the client or the server
-        proxyTunnel = self._sock[proxyTunnel.clientToProxySocket]
+        proxyTunnel = self._sock.get(proxyTunnel.clientToProxySocket)
+        if proxyTunnel is None:
+            raise UnregisteredProxyTunnelError(self, proxyTunnel)
         
         ## Close and unregister the clientToProxySocket
         if not proxyTunnel.clientToProxySocket._closed:
@@ -154,7 +172,7 @@ class ProxyConnections:
                 
 
     def closeAllTunnels(self) -> None:
-        proxyTunnels = {tunnel for tunnel in self._sock.values}
+        proxyTunnels = {tunnel for tunnel in self._sock.values()}
         for tunnel in proxyTunnels:
             self.closeTunnel(tunnel)
 
@@ -174,7 +192,7 @@ class TCPProxyServer:
     PORT: int
     PROXY_HOST: str
     PROXY_PORT: int
-    StreamInterceptor: ProxyInterceptor
+    streamInterceptor: StreamInterceptor
 
     serverSocket: socket.socket = field(init=False, default=None)
     selector: selectors.BaseSelector = field(init=False)
@@ -189,8 +207,8 @@ class TCPProxyServer:
 
     def _setupDataStructures(self):
         ## TODO: Add argument for StreamInterception for ProxyConnections construction
-        self.proxyHandlerDescriptor = proxyHandlerDescriptor(self.PROXY_HOST, self.PROXY_PORT, self.StreamInterceptor)
-        self.proxyConnections = ProxyConnections(self.PROXY_HOST, self.PROXY_PORT, self.StreamInterceptor)
+        self.proxyHandlerDescriptor = proxyHandlerDescriptor(self.PROXY_HOST, self.PROXY_PORT, self.streamInterceptor)
+        self.proxyConnections = ProxyConnections(self.PROXY_HOST, self.PROXY_PORT, self.streamInterceptor)
 
 
     def _setupSignalHandlers(self):
@@ -311,8 +329,8 @@ class TCPProxyServer:
 def main():
     HOST, PORT = "0.0.0.0", 8080
     PROXY_HOST, PROXY_PORT = "127.0.0.1", 80
-    StreamInterceptor = HTTPProxyInterceptor
-    TPS = TCPProxyServer(HOST, PORT, PROXY_HOST, PROXY_PORT, StreamInterceptor)
+    streamInterceptor = StreamInterceptor
+    TPS = TCPProxyServer(HOST, PORT, PROXY_HOST, PROXY_PORT, streamInterceptor)
     TPS.run()
 
 

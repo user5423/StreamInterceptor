@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.join("..", "src"))
 sys.path.insert(0, "src")
 from tcp_proxyserver import ProxyTunnel
 from _proxyDS import Buffer
-import _exceptions
+from _exceptions import *
 
 ## TODO: At some point in the future we want to 
 ## perform UDP and TCP tests
@@ -256,19 +256,19 @@ class Test_ProxyTunnel_ByteOperations:
         pt, _ = createProxyTunnel
         nonparticipatingSocket = PTTestResources.createClientSocket()
 
-        with pytest.raises(Exception) as excInfo:
+        with pytest.raises(UnassociatedTunnelSocket) as excInfo:
             pt.readFrom(nonparticipatingSocket)
         
-        assert "not associated with this tunnel" in str(excInfo.value)
+        assert "not associated with the ProxyTunnel" in str(excInfo.value)
 
 
     def test_readFrom_bufferOverflow_clientToProxy(self, createProxyTunnel):
         pt, socketList = createProxyTunnel
         buffer = pt._selectBufferForRead(socketList[1])
-        testdata = b"A" * (buffer.MAX_BUFFER_SIZE + 1)
+        testdata = b"A" * (buffer._MAX_BUFFER_SIZE + 1)
         socketList[0].sendall(testdata)
 
-        with pytest.raises(_exceptions.BufferOverflowError) as excInfo:
+        with pytest.raises(BufferOverflowError) as excInfo:
             pt.readFrom(pt.clientToProxySocket)
 
         assert "Max Buffer Size has been exceeded" in str(excInfo.value)
@@ -402,10 +402,10 @@ class Test_ProxyTunnel_ByteOperations:
         pt, _ = createProxyTunnel
         nonparticipatingSocket = PTTestResources.createClientSocket()
 
-        with pytest.raises(Exception) as excInfo:
+        with pytest.raises(UnassociatedTunnelSocket) as excInfo:
             pt.writeTo(nonparticipatingSocket)
         
-        assert "not associated with this tunnel" in str(excInfo.value)
+        assert "not associated with the ProxyTunnel" in str(excInfo.value)
 
 
     def test_writeTo_noDataInBuffer_clientToProxy(self, createProxyTunnel):
@@ -626,9 +626,9 @@ class Test_ProxyTunnel_HelperMethods:
     def test_selectBufferForWrite_IncorrectSocket(self, createProxyTunnel):
         pt, _ = createProxyTunnel
         nonparticipatingSocket = PTTestResources.createClientSocket()
-        with pytest.raises(Exception) as excInfo:
+        with pytest.raises(UnassociatedTunnelSocket) as excInfo:
             pt._selectBufferForRead(nonparticipatingSocket)
-        assert "not associated with this tunnel" in str(excInfo.value)
+        assert "not associated with the ProxyTunnel" in str(excInfo.value)
 
 
     ## Reading from a socket requires
@@ -647,6 +647,6 @@ class Test_ProxyTunnel_HelperMethods:
     def test_selectBufferForWrite_IncorrectSocket(self, createProxyTunnel):
         pt, _ = createProxyTunnel
         nonparticipatingSocket = PTTestResources.createClientSocket()
-        with pytest.raises(Exception) as excInfo:
+        with pytest.raises(UnassociatedTunnelSocket) as excInfo:
             pt._selectBufferForRead(nonparticipatingSocket)
-        assert "not associated with this tunnel" in str(excInfo.value)
+        assert "not associated with the ProxyTunnel" in str(excInfo.value)

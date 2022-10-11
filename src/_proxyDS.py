@@ -4,13 +4,14 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Callable, Iterable, List, NamedTuple, Sequence, Tuple
 
+from _exceptions import *
 proxyHandlerDescriptor = NamedTuple("ProxyHandlerData", [("PROXY_HOST", str), ("PROXY_PORT", int), ("StreamInterceptor", object)])
 
 
 ## TODO: Use ABCs to create abstract class
 ## NOTE: We will subclass this for the Stream Interceptor
 ## NOTE: This should be performed on a per protocol basis!!!
-class ProxyInterceptor:
+class StreamInterceptor:
     ## NOTE: This needs to rewrite any requests to the real server
     def clientToServerHook(self, requestChunk: bytes, buffer: "Buffer") -> None:
         raise NotImplementedError
@@ -42,6 +43,7 @@ class Buffer:
     REQUEST_DELIMITERS: List[bytes] = field(init=True)
     _data: bytearray = field(init=False, default_factory=bytearray)
     _requests: deque = field(init=False, default_factory=deque)
+    _MAX_BUFFER_SIZE: int = 1024 * 128 ## 128Kb
 
     def __post_init__(self):
         # ## NOTE: We'll likely change the structure later
@@ -55,17 +57,17 @@ class Buffer:
     def _validateDelimiters(self) -> None:
         """Validates that the delimiters are a list of bytestrings"""
         if not isinstance(self.REQUEST_DELIMITERS, Sequence):
-            raise TypeError(f"Incorrect type for Buffer().REQUEST_DELIMITERS - {type(self.REQUEST_DELIMITERS)}")
-        
+            raise IncorrectDelimitersTypeError(self.REQUEST_DELIMITERS)
+
         if len(self.REQUEST_DELIMITERS) == 0:
-            raise ValueError("Cannot pass empty REQUEST_DELIMITERS argument")
+            raise EmptyDelimitersTypeError(self.REQUEST_DELIMITERS)
         
         for delimiter in self.REQUEST_DELIMITERS:
             if not isinstance(delimiter, bytes):
-                raise TypeError(f"Incorrect type for Buffer().REQUEST_DELIMITERS[i] - {type(delimiter)}")
+                raise IncorrectDelimiterTypeErrpr(delimiter)
             
         if len(set(self.REQUEST_DELIMITERS)) != len(self.REQUEST_DELIMITERS):
-            raise ValueError(f"Duplicate request delimiters were detected in the argument REQUEST_DELIMITERS")
+            raise DuplicateDelimitersError(self.REQUEST_DELIMITERS)
             
         return None
     
@@ -126,9 +128,9 @@ class Buffer:
         """This pops a complete request from the bottom of the queue 
         (if a complete request exists)"""
         if not len(self._requests):
-            raise IndexError("Cannot pop a request from empty buffer._requests deque")
+            raise PopFromEmptyQueueError()
         elif self._requests[0][1] is False:
-            raise ValueError("Cannot pop a request from undelimited buffer._requests deque")
+            raise PopUndelimitedItemFromQueueError()
 
         return self._requests.popleft()
 
@@ -137,7 +139,7 @@ class Buffer:
         """This peaks the request (complete/incomplete) at the top of
         the queue"""
         if not len(self._requests):
-            raise IndexError("Cannot peak a request from empty buffer._requests deque")
+            raise PeakFromEmptyQueueError()
         
         return self._requests[-1]
 
