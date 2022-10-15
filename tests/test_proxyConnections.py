@@ -1,11 +1,10 @@
-from atexit import register
 import os
 import selectors
 import sys
 import socket
-from matplotlib import collections
 import pytest
-
+import collections
+from typing import List
 sys.path.insert(0, os.path.join("..", "src"))
 sys.path.insert(0, "src")
 from tcp_proxyserver import ProxyConnections, ProxyTunnel
@@ -23,178 +22,42 @@ class MockStreamInterceptor(StreamInterceptor):
         return None
 
 
-
-class Test_ProxyConnections_Init:
-    def test_default(self):
-        with pytest.raises(TypeError) as excInfo:
-            ProxyConnections()
-
-        assert "PROXY_HOST" in str(excInfo.value)
-        assert "PROXY_PORT" in str(excInfo.value)
-        assert "streamInterceptor" in str(excInfo.value)
-
-    def _assertValidInitialization(self, pc, PROXY_HOST, PROXY_PORT):
+class PCTestResources:
+    @classmethod
+    def _assertValidInitialization(cls, pc, PROXY_HOST, PROXY_PORT, selector) -> None:
         assert pc.PROXY_HOST == PROXY_HOST
         assert pc.PROXY_PORT == PROXY_PORT
         assert StreamInterceptor in pc.streamInterceptor.__mro__
         assert pc.streamInterceptor.__mro__[0] != StreamInterceptor
-        
-    def test_proxyHost_validFQDN(self):
-        PROXY_HOST, PROXY_PORT = "host.localhost", 80
-        interceptor = MockStreamInterceptor
-        with pytest.raises(ValueError) as excInfo:
-            ProxyConnections(PROXY_HOST, PROXY_PORT, interceptor)
-        
-        assert "does not appear to be an IPv4 or IPv6 address" in str(excInfo.value)
+        assert pc.selector == selector
 
-    def test_proxyHost_invalidIPv4(self):
-        PROXY_HOST, PROXY_PORT = "8.8.8", 80 ## Missing octect from address
-        interceptor = MockStreamInterceptor
-        with pytest.raises(ValueError) as excInfo:
-            ProxyConnections(PROXY_HOST, PROXY_PORT, interceptor)
-        assert "does not appear to be an IPv4 or IPv6 address" in str(excInfo.value)
+    @classmethod
+    def _assertConstantAttributes(cls, pc, PROXY_HOST, PROXY_PORT, selector) -> None:
+        cls._assertValidInitialization(pc, PROXY_HOST, PROXY_PORT, selector)
 
-    def test_proxyHost_validIPv4_publicAddress(self):
-        PROXY_HOST, PROXY_PORT = "8.8.8.8", 80 ## Google DNS IPv4
-        interceptor = MockStreamInterceptor
-        pc = ProxyConnections(PROXY_HOST, PROXY_PORT, interceptor)
-        self._assertValidInitialization(pc, PROXY_HOST, PROXY_PORT)
+    @classmethod
+    def _assertClosedProxyConnections(cls, pc: ProxyConnections) -> None:
+        ## All fd should not be registered
+        assert len(pc._sock) == 0
+        assert len(pc.selector.get_map()) == 0
 
-    def test_proxyHost_validIPv4_publicLocalInterface(self):
-        PROXY_HOST, PROXY_PORT = "0.0.0.0", 80
-        interceptor = MockStreamInterceptor
-        pc = ProxyConnections(PROXY_HOST, PROXY_PORT, interceptor)
-        self._assertValidInitialization(pc, PROXY_HOST, PROXY_PORT)
+    @classmethod
+    def _assertOpenProxyConnections(cls, pc: ProxyConnections, pcDict: dict) -> None:
+        assert len(pc._sock) == len(pcDict) * 2 
+        for socket1, socket2 in pcDict.items():
+            assert pc.get(socket1) == pc.get(socket2)
 
-    def test_proxyHost_validIPV4_localhostInterface(self):
-        PROXY_HOST, PROXY_PORT = "127.0.0.1", 80
-        interceptor = MockStreamInterceptor
-        pc = ProxyConnections(PROXY_HOST, PROXY_PORT, interceptor)
-        self._assertValidInitialization(pc, PROXY_HOST, PROXY_PORT)
+    @classmethod
+    def _assertRegisteredProxySockets(cls, pc: ProxyConnections, registeredSocks: List[socket.socket]):
+        assert len(pc._sock) == len(pc.selector.get_map()) == len(registeredSocks)
+        expectedSelectorEvent = selectors.EVENT_READ | selectors.EVENT_WRITE
+        for sock in registeredSocks:
+            selectorKey = pc.selector.get_key(sock)
+            assert selectorKey.data == "connection"
+            assert selectorKey.events == expectedSelectorEvent
 
-    def test_proxyHost_validIPv4_privateClassA(self): 
-        PROXY_HOST, PROXY_PORT = "10.0.0.0", 80
-        interceptor = MockStreamInterceptor
-        pc = ProxyConnections(PROXY_HOST, PROXY_PORT, interceptor)
-        self._assertValidInitialization(pc, PROXY_HOST, PROXY_PORT)
-
-    def test_proxyHost_validIPv4_privateClassB(self):
-        PROXY_HOST, PROXY_PORT = "172.16.0.0", 80
-        interceptor = MockStreamInterceptor
-        pc = ProxyConnections(PROXY_HOST, PROXY_PORT, interceptor)
-        self._assertValidInitialization(pc, PROXY_HOST, PROXY_PORT)
-
-    def test_proxyHost_validIPv4_privateClassC(self):
-        PROXY_HOST, PROXY_PORT = "192.168.0.0", 80
-        interceptor = MockStreamInterceptor
-        pc = ProxyConnections(PROXY_HOST, PROXY_PORT, interceptor)
-        self._assertValidInitialization(pc, PROXY_HOST, PROXY_PORT)
-
-    def test_proxyHost_invalidIPv6(self):
-        PROXY_HOST, PROXY_PORT = "0:0:0:0:0:0", 80 ## missing octects from address
-        interceptor = MockStreamInterceptor
-        with pytest.raises(ValueError) as excInfo:
-            ProxyConnections(PROXY_HOST, PROXY_PORT, interceptor)
-        assert "does not appear to be an IPv4 or IPv6 address" in str(excInfo.value)
-
-    def test_proxyHost_validIPv6_localhostAddress(self):
-        PROXY_HOST, PROXY_PORT = "0:0:0:0:0:0:0:1", 80
-        interceptor = MockStreamInterceptor
-        pc = ProxyConnections(PROXY_HOST, PROXY_PORT, interceptor)
-        self._assertValidInitialization(pc, PROXY_HOST, PROXY_PORT)
-
-    def test_proxyHost_validIPv6_publicInterface(self):
-        PROXY_HOST, PROXY_PORT = "0:0:0:0:0:0:0:0", 80
-        interceptor = MockStreamInterceptor
-        pc = ProxyConnections(PROXY_HOST, PROXY_PORT, interceptor)
-        self._assertValidInitialization(pc, PROXY_HOST, PROXY_PORT)
-
-    def test_proxyHost_validIPv6_publicAddress(self):
-        PROXY_HOST, PROXY_PORT = "2001:4860:4860::8888", 80 ## Google DNS IPv6
-        interceptor = MockStreamInterceptor
-        pc = ProxyConnections(PROXY_HOST, PROXY_PORT, interceptor)
-        self._assertValidInitialization(pc, PROXY_HOST, PROXY_PORT)
-
-    def test_proxyHost_validIPv6_privateAddress(self):
-        PROXY_HOST, PROXY_PORT = "fc00::", 80
-        interceptor = MockStreamInterceptor
-        pc = ProxyConnections(PROXY_HOST, PROXY_PORT, interceptor)
-        self._assertValidInitialization(pc, PROXY_HOST, PROXY_PORT)
-
-
-    # def test_proxyPort_incorrectType(self):
-    #     raise NotImplementedError()
-
-    # def test_proxyPort_incorrectValue(self):
-    #     raise NotImplementedError()
-
-
-
-    def test_streamInterceptor_baseClass(self):
-        PROXY_HOST, PROXY_PORT = "127.0.0.1", 80
-        streamInterceptor = StreamInterceptor
-        with pytest.raises(AbstractStreamInterceptorError) as excInfo:
-            ProxyConnections(PROXY_HOST, PROXY_PORT, streamInterceptor)
-        assert "A subclass of StreamInterceptor is required" in str(excInfo.value)
-
-    def test_streamInterceptor_abstractSubclass_clientToServerHook(self):
-        ## NOTE: There are still incomplete methods that haven't been overriden
-        PROXY_HOST, PROXY_PORT = "127.0.0.1", 80
-
-        class StreamInterceptor_incompleteClientToServerHook(MockStreamInterceptor):
-            def __init__(self) -> None:
-                self.serverToClientChunks = collections.deque([])
-
-            def serverToClientHook(self, requestChunk: bytes, buffer: "Buffer") -> None:
-                self.serverToClientChunks.append(requestChunk)
-
-        streamInterceptor = StreamInterceptor_incompleteClientToServerHook
-        with pytest.raises(TypeError) as excInfo:
-            ProxyConnections(PROXY_HOST, PROXY_PORT, streamInterceptor)
-
-        assert "Incomplete subclass" in str(excInfo.value)
-        assert "clientToServerHook()" in str(excInfo.value)
-
-    def test_streamInterceptor_abstractSubclass_ServerToClientHook(self):
-        ## NOTE: There are still incomplete methods that haven't been overriden
-        PROXY_HOST, PROXY_PORT = "127.0.0.1", 80
-
-        class StreamInterceptor_incompleteServerToClientHook(MockStreamInterceptor):
-            def __init__(self) -> None:
-                self.clientToServerChunks = collections.deque([])
-
-            def clientToServerHook(self, requestChunk: bytes, buffer: "Buffer") -> None:
-                self.clientToServerChunks.append(requestChunk)
-
-        streamInterceptor = StreamInterceptor_incompleteServerToClientHook
-        with pytest.raises(TypeError) as excInfo:
-            ProxyConnections(PROXY_HOST, PROXY_PORT, streamInterceptor)
-
-        assert "Incomplete subclass" in str(excInfo.value)
-        assert "clientToServerHook()" in str(excInfo.value)
-
-    def test_streamInterceptor_completeSubclass(self):
-        ## NOTE: There are no incomplete request hooks
-        PROXY_HOST, PROXY_PORT = "127.0.0.1", 80
-        streamInterceptor = MockStreamInterceptor
-        pc = ProxyConnections(PROXY_HOST, PROXY_PORT, streamInterceptor)
-        self._assertValidInitialization(pc, PROXY_HOST, PROXY_PORT)
-
-
-@pytest.fixture
-def createPC():
-    PROXY_HOST, PROXY_PORT = "127.0.0.1", 80
-    streamInterceptor = MockStreamInterceptor
-    pc = ProxyConnections(PROXY_HOST, PROXY_PORT, streamInterceptor)
-    return pc, PROXY_HOST, PROXY_PORT, streamInterceptor
-
-
-
-class Test_ProxyConnections_operations:
-    ## NOTE: At the point of creation of ProxyTunnel
-    ## the sockets are bound and connected
-
-    def _createTunnel(self):
+    @classmethod
+    def _createTunnel(cls):
         s1 = socket.socket()
         server2 = socket.create_server(("127.0.0.1", 8888))
         s1.connect(("127.0.0.1", 8888))
@@ -209,365 +72,405 @@ class Test_ProxyConnections_operations:
 
         return s1, s2, s3, s4
 
-    def _closeSockets(self, *sockets):
+    @classmethod
+    def _closeSockets(cls, *sockets):
         for socket in sockets:
             socket.close()
 
 
-    def _createPT(self, pc, socks):
-        s1, s2, s3, s4 = self._createTunnel()
-        socks.extend([s1,s2,s3,s4])
-        pt = ProxyTunnel(s2, s3, MockStreamInterceptor)
-        pc._put(s2, pt)
-        pc._put(s3, pt)
-        return pt, s2, s3
+class Test_ProxyConnections_Init:
+    ## Helper Method for testing host args
+    def _assertValidHostArgs(self, PROXY_HOST, PROXY_PORT) -> None:
+        interceptor = MockStreamInterceptor
+        selector = selectors.DefaultSelector()
+        pc = ProxyConnections(PROXY_HOST, PROXY_PORT, interceptor, selector)
+        PCTestResources._assertValidInitialization(pc, PROXY_HOST, PROXY_PORT, selector)
+
+    ## Helper Method for testing host args
+    def _assertInvalidHostArgs(self, PROXY_HOST, PROXY_PORT, errorMessageSnippet) -> None:
+        interceptor = MockStreamInterceptor
+        selector = selectors.DefaultSelector()
+        with pytest.raises(ValueError) as excInfo:
+            ProxyConnections(PROXY_HOST, PROXY_PORT, interceptor, selector)
+        assert errorMessageSnippet in str(excInfo.value)
+
+    def test_default(self):
+        with pytest.raises(TypeError) as excInfo:
+            ProxyConnections()
+
+        assert "PROXY_HOST" in str(excInfo.value)
+        assert "PROXY_PORT" in str(excInfo.value)
+        assert "streamInterceptor" in str(excInfo.value)
+        assert "selector" in str(excInfo.value)
+        
+    def test_proxyHost_validFQDN(self):
+        PROXY_HOST, PROXY_PORT = "host.localhost", 80
+        errorMessageSnippet = "does not appear to be an IPv4 or IPv6 address"
+        self._assertInvalidHostArgs(PROXY_HOST, PROXY_PORT, errorMessageSnippet)
+
+    def test_proxyHost_invalidIPv4(self):
+        PROXY_HOST, PROXY_PORT = "8.8.8", 80 ## Missing octect from address
+        errorMessageSnippet = "does not appear to be an IPv4 or IPv6 address"
+        self._assertInvalidHostArgs(PROXY_HOST, PROXY_PORT, errorMessageSnippet)
+
+    def test_proxyHost_validIPv4_publicAddress(self):
+        PROXY_HOST, PROXY_PORT = "8.8.8.8", 80 ## Google DNS IPv4
+        self._assertValidHostArgs(PROXY_HOST, PROXY_PORT)
+
+    def test_proxyHost_validIPv4_publicLocalInterface(self):
+        PROXY_HOST, PROXY_PORT = "0.0.0.0", 80
+        self._assertValidHostArgs(PROXY_HOST, PROXY_PORT)
+
+    def test_proxyHost_validIPV4_localhostInterface(self):
+        PROXY_HOST, PROXY_PORT = "127.0.0.1", 80
+        self._assertValidHostArgs(PROXY_HOST, PROXY_PORT)
+
+    def test_proxyHost_validIPv4_privateClassA(self): 
+        PROXY_HOST, PROXY_PORT = "10.0.0.0", 80
+        self._assertValidHostArgs(PROXY_HOST, PROXY_PORT)
+
+    def test_proxyHost_validIPv4_privateClassB(self):
+        PROXY_HOST, PROXY_PORT = "172.16.0.0", 80
+        self._assertValidHostArgs(PROXY_HOST, PROXY_PORT)
+
+    def test_proxyHost_validIPv4_privateClassC(self):
+        PROXY_HOST, PROXY_PORT = "192.168.0.0", 80
+        self._assertValidHostArgs(PROXY_HOST, PROXY_PORT)
+
+    def test_proxyHost_invalidIPv6(self):
+        PROXY_HOST, PROXY_PORT = "0:0:0:0:0:0", 80 ## missing octects from address
+        errorMessageSnippet = "does not appear to be an IPv4 or IPv6 address"
+        self._assertInvalidHostArgs(PROXY_HOST, PROXY_PORT, errorMessageSnippet)
+
+    def test_proxyHost_validIPv6_localhostAddress(self):
+        PROXY_HOST, PROXY_PORT = "0:0:0:0:0:0:0:1", 80
+        self._assertValidHostArgs(PROXY_HOST, PROXY_PORT)
+
+    def test_proxyHost_validIPv6_publicInterface(self):
+        PROXY_HOST, PROXY_PORT = "0:0:0:0:0:0:0:0", 80
+        self._assertValidHostArgs(PROXY_HOST, PROXY_PORT)
+
+    def test_proxyHost_validIPv6_publicAddress(self):
+        PROXY_HOST, PROXY_PORT = "2001:4860:4860::8888", 80 ## Google DNS IPv6
+        self._assertValidHostArgs(PROXY_HOST, PROXY_PORT)
+
+    def test_proxyHost_validIPv6_privateAddress(self):
+        PROXY_HOST, PROXY_PORT = "fc00::", 80
+        self._assertValidHostArgs(PROXY_HOST, PROXY_PORT)
+
+    # def test_proxyPort_incorrectType(self):
+    #     raise NotImplementedError()
+
+    # def test_proxyPort_incorrectValue(self):
+    #     raise NotImplementedError()
+
+
+
+    def test_streamInterceptor_baseClass(self):
+        PROXY_HOST, PROXY_PORT = "127.0.0.1", 80
+        interceptor = StreamInterceptor
+        selector = selectors.DefaultSelector()
+        with pytest.raises(AbstractStreamInterceptorError) as excInfo:
+            ProxyConnections(PROXY_HOST, PROXY_PORT, interceptor, selector)
+        assert "A subclass of StreamInterceptor is required" in str(excInfo.value)
+
+    def test_streamInterceptor_abstractSubclass_clientToServerHook(self):
+        ## NOTE: There are still incomplete methods that haven't been overriden
+        PROXY_HOST, PROXY_PORT = "127.0.0.1", 80
+        selector = selectors.DefaultSelector()
+
+        class StreamInterceptor_incompleteClientToServerHook(MockStreamInterceptor):
+            def __init__(self) -> None:
+                self.serverToClientChunks = collections.deque([])
+
+            def serverToClientHook(self, requestChunk: bytes, buffer: "Buffer") -> None:
+                self.serverToClientChunks.append(requestChunk)
+
+        interceptor = StreamInterceptor_incompleteClientToServerHook
+        with pytest.raises(TypeError) as excInfo:
+            ProxyConnections(PROXY_HOST, PROXY_PORT, interceptor, selector)
+
+        assert "Incomplete subclass" in str(excInfo.value)
+        assert "clientToServerHook()" in str(excInfo.value)
+
+    def test_streamInterceptor_abstractSubclass_ServerToClientHook(self):
+        ## NOTE: There are still incomplete methods that haven't been overriden
+        PROXY_HOST, PROXY_PORT = "127.0.0.1", 80
+        selector = selectors.DefaultSelector()
+
+        class StreamInterceptor_incompleteServerToClientHook(MockStreamInterceptor):
+            def __init__(self) -> None:
+                self.clientToServerChunks = collections.deque([])
+
+            def clientToServerHook(self, requestChunk: bytes, buffer: "Buffer") -> None:
+                self.clientToServerChunks.append(requestChunk)
+
+        interceptor = StreamInterceptor_incompleteServerToClientHook
+        with pytest.raises(TypeError) as excInfo:
+            ProxyConnections(PROXY_HOST, PROXY_PORT, interceptor, selector)
+
+        assert "Incomplete subclass" in str(excInfo.value)
+        assert "clientToServerHook()" in str(excInfo.value)
+
+    def test_streamInterceptor_completeSubclass(self):
+        ## NOTE: There are no incomplete request hooks
+        PROXY_HOST, PROXY_PORT = "127.0.0.1", 80
+        interceptor = MockStreamInterceptor
+        selector = selectors.DefaultSelector()
+        pc = ProxyConnections(PROXY_HOST, PROXY_PORT, interceptor, selector)
+        PCTestResources._assertValidInitialization(pc, PROXY_HOST, PROXY_PORT, selector)
+
+
+@pytest.fixture
+def createPC():
+    PROXY_HOST, PROXY_PORT = "127.0.0.1", 80
+    streamInterceptor = MockStreamInterceptor
+    selector = selectors.DefaultSelector()
+    pc = ProxyConnections(PROXY_HOST, PROXY_PORT, streamInterceptor, selector)
+    return pc, PROXY_HOST, PROXY_PORT, streamInterceptor, selector
+
+
+
+class Test_ProxyConnections_operations:
+    ## NOTE: At the point of creation of ProxyTunnel
+    ## the sockets are bound and connected
 
     ## get() request
     def test_get_noTunnelRegistered(self, createPC):
-        pc, PROXY_HOST, PROXY_PORT, streamInterceptor = createPC
-        s = socket.socket()
-        assert pc.get(s) == None
-        assert pc.PROXY_HOST == PROXY_HOST
-        assert pc.PROXY_PORT == PROXY_PORT
-        assert pc.streamInterceptor == streamInterceptor
+        pc, PROXY_HOST, PROXY_PORT, streamInterceptor, selector = createPC
+        PCTestResources._assertOpenProxyConnections(pc, {})
+        PCTestResources._assertConstantAttributes(pc, PROXY_HOST, PROXY_PORT, selector)
 
     def test_get_singleTunnelRegistered(self, createPC):
-        pc, PROXY_HOST, PROXY_PORT, streamInterceptor = createPC
-        s1, s2, s3, s4 = self._createTunnel()
+        pc, PROXY_HOST, PROXY_PORT, streamInterceptor, selector = createPC
+        s1, s2, s3, s4 = PCTestResources._createTunnel()
 
         try:
-            pt = ProxyTunnel(s2, s3, MockStreamInterceptor)
-            
+            pt = ProxyTunnel(s2, s3, streamInterceptor)
             pc._sock[s2] = pt
             pc._sock[s3] = pt
-
-            assert pc.get(s2) == pt
-            assert pc.PROXY_HOST == PROXY_HOST
-            assert pc.PROXY_PORT == PROXY_PORT
-            assert pc.streamInterceptor == streamInterceptor
+            PCTestResources._assertOpenProxyConnections(pc, {s2:s3})
+            PCTestResources._assertConstantAttributes(pc, PROXY_HOST, PROXY_PORT, selector)
         except Exception as e:
-            self._closeSockets(s1, s2, s3, s4)
+            PCTestResources._closeSockets(s1, s2, s3, s4)
             raise e
 
     def test_get_multipleTunnelsRegistered(self, createPC):
-        pc, PROXY_HOST, PROXY_PORT, streamInterceptor = createPC
-        
+        pc, PROXY_HOST, PROXY_PORT, streamInterceptor, selector = createPC
         tunnelsNo = 5
         socks = []
         managedSocks = []
-        proxyTunnels = []
+        tunnelDict = {}
+        
         try:
             for _ in range(tunnelsNo):
-                s1, s2, s3, s4 = self._createTunnel()
-                pt = ProxyTunnel(s2, s3, MockStreamInterceptor)
-            
+                s1, s2, s3, s4 = PCTestResources._createTunnel()
+                pt = ProxyTunnel(s2, s3, streamInterceptor)
                 pc._sock[s2] = pt
                 pc._sock[s3] = pt
-
                 socks.extend([s1,s2,s3,s4])
                 managedSocks.extend([s2,s3])
-                proxyTunnels.append(pt)
+                tunnelDict[s2] = s3
 
-            assert len(managedSocks) == tunnelsNo * 2
-            for index, sock in enumerate(managedSocks):
-                pt = proxyTunnels[index//2]
-                assert pc.get(sock) == pt
-                assert pc.PROXY_HOST == PROXY_HOST
-                assert pc.PROXY_PORT == PROXY_PORT
-                assert pc.streamInterceptor == streamInterceptor
+            PCTestResources._assertOpenProxyConnections(pc, tunnelDict)
+            PCTestResources._assertConstantAttributes(pc, PROXY_HOST, PROXY_PORT, selector)
 
         except Exception as e:
-            self._closeSockets(*socks)
+            PCTestResources._closeSockets(*socks)
             raise e
-
-
 
     def test_createTunnel_noTunnelsRegistered(self, createPC):
-        pc, PROXY_HOST, PROXY_PORT, streamInterceptor = createPC
+        pc, PROXY_HOST, PROXY_PORT, streamInterceptor, selector = createPC
         socks = []
 
         try:
-            s1, s2, s3, s4 = self._createTunnel()
+            s1, s2, s3, s4 = PCTestResources._createTunnel()
             socks.extend([s1,s2,s3,s4])
             pt = pc.createTunnel(s2, s3)
+
             assert isinstance(pt, ProxyTunnel)
-
-            assert len(pc._sock) == 2
-            assert len(pc.selector.get_map()) == 2
-            assert pc.get(s2) == pc.get(s3)
-
-            assert pc.PROXY_HOST == PROXY_HOST
-            assert pc.PROXY_PORT == PROXY_PORT
-            assert pc.streamInterceptor == streamInterceptor
+            PCTestResources._assertConstantAttributes(pc, PROXY_HOST, PROXY_PORT, selector)
+            PCTestResources._assertOpenProxyConnections(pc, {s2:s3})
+            PCTestResources._assertRegisteredProxySockets(pc, (s2, s3))
         except Exception as e:
-            self._closeSockets(*socks)
+            PCTestResources._closeSockets(*socks)
             raise e
-
-        
 
     def test_createTunnel_singleTunnelRegistered(self, createPC):
-        pc, PROXY_HOST, PROXY_PORT, streamInterceptor = createPC
-        expectedSelectorEvent = selectors.EVENT_READ | selectors.EVENT_WRITE
+        pc, PROXY_HOST, PROXY_PORT, streamInterceptor, selector = createPC
         socks = []
 
         try:
-            s1, s2, s3, s4 = self._createTunnel()
+            ## Tunnel 1
+            s1, s2, s3, s4 = PCTestResources._createTunnel()
             socks.extend([s1,s2,s3,s4])
-            s1, s2_new, s3_new, s4 = self._createTunnel()
-            socks.extend([s1,s2_new,s3_new,s4])
-
-            pt = pc.createTunnel(s2, s3)
-            assert isinstance(pt, ProxyTunnel)
-
-            pt = pc.createTunnel(s2_new, s3_new)
-            assert isinstance(pt, ProxyTunnel)
-
-            assert len(pc._sock) == 4
-            assert len(pc.selector.get_map()) == 4
-            assert pc.get(s2) == pc.get(s3)
-            assert pc.get(s2_new) == pc.get(s3_new)
-
-            for sock in (s2, s3, s2_new, s3_new):
-                selectorKey = pc.selector.get_key(sock)
-                assert selectorKey.data == "connection"
-                assert selectorKey.events == expectedSelectorEvent
-
-            assert pc.PROXY_HOST == PROXY_HOST
-            assert pc.PROXY_PORT == PROXY_PORT
-            assert pc.streamInterceptor == streamInterceptor
+            pc.createTunnel(s2, s3), ProxyTunnel
+            ## Tunnel 2
+            s1_new, s2_new, s3_new, s4_new = PCTestResources._createTunnel()
+            socks.extend([s1_new,s2_new,s3_new,s4_new])
+            pc.createTunnel(s2_new, s3_new), ProxyTunnel
+            
+            PCTestResources._assertConstantAttributes(pc, PROXY_HOST, PROXY_PORT, selector)
+            PCTestResources._assertOpenProxyConnections(pc, {s2:s3, s2_new: s3_new})
+            PCTestResources._assertRegisteredProxySockets(pc, (s2, s3, s2_new, s3_new))
         except Exception as e:
-            self._closeSockets(*socks)
+            PCTestResources._closeSockets(*socks)
             raise e
 
-
     def test_createTunnel_multipleTunnelsRegistered(self, createPC):
-        pc, PROXY_HOST, PROXY_PORT, streamInterceptor = createPC
-        expectedSelectorEvent = selectors.EVENT_READ | selectors.EVENT_WRITE
+        pc, PROXY_HOST, PROXY_PORT, streamInterceptor, selector = createPC
         socks = []
         registeredSocks = []
+        tunnelDict = {}
         tunnels = 10
 
         try:
             for _ in range(tunnels):
-                s1, s2, s3, s4 = self._createTunnel()
+                s1, s2, s3, s4 = PCTestResources._createTunnel()
                 socks.extend([s1,s2,s3,s4])
                 registeredSocks.extend([s2,s3])
-                pt = pc.createTunnel(s2, s3)
-                assert isinstance(pt, ProxyTunnel)
-                assert pc.get(s2) == pc.get(s3)
+                tunnelDict[s2] = s3
+                assert isinstance(pc.createTunnel(s2, s3), ProxyTunnel)
 
-            for sock in registeredSocks:
-                selectorKey = pc.selector.get_key(sock)
-                assert selectorKey.data == "connection"
-                assert selectorKey.events == expectedSelectorEvent
+            PCTestResources._assertOpenProxyConnections(pc, tunnelDict)
+            PCTestResources._assertRegisteredProxySockets(pc, registeredSocks)
+            PCTestResources._assertConstantAttributes(pc, PROXY_HOST, PROXY_PORT, selector)
 
-            assert len(pc._sock) == tunnels*2
-            assert len(pc.selector.get_map()) == tunnels*2
-
-            assert pc.PROXY_HOST == PROXY_HOST
-            assert pc.PROXY_PORT == PROXY_PORT
-            assert pc.streamInterceptor == streamInterceptor
         except Exception as e:
-            self._closeSockets(*socks)
+            PCTestResources._closeSockets(*socks)
             raise e
 
-
     def test_createTunnel_alreadyRegisteredSocket_clientToProxy(self, createPC):
-        pc, PROXY_HOST, PROXY_PORT, streamInterceptor = createPC
-        expectedSelectorEvent = selectors.EVENT_READ | selectors.EVENT_WRITE
+        pc, PROXY_HOST, PROXY_PORT, streamInterceptor, selector = createPC
         socks = []
 
         try:
-            s1, s2, s3, s4 = self._createTunnel()
+            ## Tunnel 1
+            s1, s2, s3, s4 = PCTestResources._createTunnel()
             socks.extend([s1,s2,s3,s4])
             pc.createTunnel(s2, s3)
-
-            s1, _, s3_new, s4 = self._createTunnel()
-            socks.extend([s1,s2,s3,s4])
-
+            ## Tunnel 2
+            s1_new, s2_new, s3_new, s4_new = PCTestResources._createTunnel()
+            socks.extend([s1_new, s2_new, s3_new, s4_new])
             with pytest.raises(AlreadyRegisteredSocketError) as excInfo:
-                pc.createTunnel(s2, s3_new)
+                pc.createTunnel(s2_new, s3_new)
 
             assert "already registered" in str(excInfo.value)
             assert "clientToProxy" in str(excInfo.value)
-            
-            ## This should be registered in the original successful createTunnel call
-            for sock in (s2, s3):
-                selectorKey = pc.selector.get_key(sock)
-                assert selectorKey.data == "connection"
-                assert selectorKey.events == expectedSelectorEvent
+            ## Since the second createTunnel call failed, it should never register this socket
+            PCTestResources._assertConstantAttributes(pc, PROXY_HOST, PROXY_PORT, selector)
+            PCTestResources._assertOpenProxyConnections(pc, {s2:s3})
+            PCTestResources._assertRegisteredProxySockets((s2, s3))
 
-            ## Since createTunnel call failed, it should never register this socket
-            with pytest.raises(UnregisteredProxyTunnelError):
-                pc.selector.get_key(s3_new)
-
-            assert len(pc._sock) == 2
-            assert len(pc.selector.get_map()) == 2
-
-            assert pc.PROXY_HOST == PROXY_HOST
-            assert pc.PROXY_PORT == PROXY_PORT
-            assert pc.streamInterceptor == streamInterceptor
         except Exception as e:
-            self._closeSockets(*socks)
+            PCTestResources._closeSockets(*socks)
             raise e
 
-
     def test_createTunnel_alreadyRegisteredSocket_proxyToServer(self, createPC):
-        pc, PROXY_HOST, PROXY_PORT, streamInterceptor = createPC
+        pc, PROXY_HOST, PROXY_PORT, streamInterceptor, selector = createPC
         socks = []
 
         try:
-            s1, s2, s3, s4 = self._createTunnel()
+            ## Tunnel 1
+            s1, s2, s3, s4 = PCTestResources._createTunnel()
             socks.extend([s1,s2,s3,s4])
             pc.createTunnel(s2, s3)
-
-            s1, s2, _, s4 = self._createTunnel()
-            socks.extend([s1,s2,s3,s4])
-
+            ## Tunnel 2
+            s1_new, s2_new, s3_new, s4_new = PCTestResources._createTunnel()
+            socks.extend([s1_new,s2_new,s3_new,s4_new])
             with pytest.raises(AlreadyRegisteredSocketError) as excInfo:
                 pc.createTunnel(s2, s3)
 
             assert "already registered" in str(excInfo.value)
             assert "proxyToServer" in str(excInfo.value)
-            
-            assert len(pc._sock) == 2
-            assert len(pc.selector.get_map()) == 2
-
-            assert pc.PROXY_HOST == PROXY_HOST
-            assert pc.PROXY_PORT == PROXY_PORT
-            assert pc.streamInterceptor == streamInterceptor
+            PCTestResources._assertOpenProxyConnections(pc, {s2:s3})
+            PCTestResources._assertConstantAttributes(pc, PROXY_HOST, PROXY_PORT, selector)
         except Exception as e:
-            self._closeSockets(*socks)
+            PCTestResources._closeSockets(*socks)
             raise e
 
-
     def test_closeTunnel_notRegisteredTunnel(self, createPC):
-        pc, PROXY_HOST, PROXY_PORT, streamInterceptor = createPC
+        pc, PROXY_HOST, PROXY_PORT, streamInterceptor, selector = createPC
         socks = []
 
         try:
-            s1, s2, s3, s4 = self._createTunnel()
+            s1, s2, s3, s4 = PCTestResources._createTunnel()
             socks.extend([s1,s2,s3,s4])
             pt = ProxyTunnel(s2, s3, streamInterceptor)
-
-            with pytest.raises(KeyError) as excInfo:
+            with pytest.raises(UnregisteredProxyTunnelError) as excInfo:
                 pc.closeTunnel(pt)
 
             assert "not registered" in str(excInfo.value)
             assert "ProxyTunnel" in str(excInfo.value)
-
-            assert len(pc._sock) == 0
-            assert len(pc.selector.get_map()) == 0
-
-            assert pc.PROXY_HOST == PROXY_HOST
-            assert pc.PROXY_PORT == PROXY_PORT
-            assert pc.streamInterceptor == streamInterceptor
+            PCTestResources._assertClosedProxyConnections(pc)
+            PCTestResources._assertConstantAttributes(pc, PROXY_HOST, PROXY_PORT, selector)
         except Exception as e:
-            self._closeSockets(*socks)
+            PCTestResources._closeSockets(*socks)
             raise e
 
     def test_closeTunnel_registeredTunnel(self, createPC):
-        pc, PROXY_HOST, PROXY_PORT, streamInterceptor = createPC
+        pc, PROXY_HOST, PROXY_PORT, streamInterceptor, selector = createPC
         socks = []
 
         try:
-            s1, s2, s3, s4 = self._createTunnel()
+            s1, s2, s3, s4 = PCTestResources._createTunnel()
             socks.extend([s1,s2,s3,s4])
             pt = pc.createTunnel(s2, s3)
-
             ret = pc.closeTunnel(pt)
 
             assert ret is None
-            assert pt.clientToProxySocket not in pc._sock
-            assert pt.proxyToServerSocket not in pc._sock
-            
-            ## These sockets should be unregistered 
-            ## NOTE: The sockets are closed so attempting to get key
-            ## results in .get(fd=-1) which is invalid value
-            ## --> hence ValueError is raised instead of KeyError
-            for sock in (s2, s3):
-                with pytest.raises(ValueError):
-                    pc.selector.get_key(sock)
-
-            assert len(pc._sock) == 0
-            assert len(pc.selector.get_map()) == 0
-
-            assert pc.PROXY_HOST == PROXY_HOST
-            assert pc.PROXY_PORT == PROXY_PORT
-            assert pc.streamInterceptor == streamInterceptor
-            
+            PCTestResources._assertClosedProxyConnections(pc)
+            PCTestResources._assertConstantAttributes(pc, PROXY_HOST, PROXY_PORT, selector)
         except Exception as e:
-            self._closeSockets(*socks)
+            PCTestResources._closeSockets(*socks)
             raise e
 
     def test_closeAllTunnels_noTunnel(self, createPC):
-        pc, PROXY_HOST, PROXY_PORT, streamInterceptor = createPC
+        pc, PROXY_HOST, PROXY_PORT, streamInterceptor, selector = createPC
         socks = []
 
         try:
-            pc.closeAllTunnels()
-
-            assert len(pc._sock) == 0
-            assert len(pc.selector.get_map()) == 0
-
-            assert pc.PROXY_HOST == PROXY_HOST
-            assert pc.PROXY_PORT == PROXY_PORT
-            assert pc.streamInterceptor == streamInterceptor
+            ret = pc.closeAllTunnels()
+            
+            assert ret is None
+            PCTestResources._assertClosedProxyConnections(pc)
+            PCTestResources._assertConstantAttributes(pc, PROXY_HOST, PROXY_PORT, selector)
         except Exception as e:
-            self._closeSockets(*socks)
+            PCTestResources._closeSockets(*socks)
             raise e
 
     def test_closeAllTunnels_singleTunnel(self, createPC):
-        pc, PROXY_HOST, PROXY_PORT, streamInterceptor = createPC
+        pc, PROXY_HOST, PROXY_PORT, streamInterceptor, selector = createPC
         socks = []
 
         try:
-            s1, s2, s3, s4 = self._createTunnel()
+            s1, s2, s3, s4 = PCTestResources._createTunnel()
             socks.extend([s1,s2,s3,s4])
             pc.createTunnel(s2,s3)
-
             ret = pc.closeAllTunnels()
 
             assert ret is None
-
-            assert len(pc._sock) == 0
-            assert len(pc.selector.get_map()) == 0
-
-            assert pc.PROXY_HOST == PROXY_HOST
-            assert pc.PROXY_PORT == PROXY_PORT
-            assert pc.streamInterceptor == streamInterceptor
+            PCTestResources._assertClosedProxyConnections(pc)
+            PCTestResources._assertConstantAttributes(pc, PROXY_HOST, PROXY_PORT, selector)
         except Exception as e:
-            self._closeSockets(*socks)
+            PCTestResources._closeSockets(*socks)
             raise e
 
     def test_closeAllTunnels_manyTunnels(self, createPC):
-        pc, PROXY_HOST, PROXY_PORT, streamInterceptor = createPC
+        pc, PROXY_HOST, PROXY_PORT, streamInterceptor, selector = createPC
         socks = []
         tunnels = 10
         try:
             for _ in range(tunnels):
-                s1, s2, s3, s4 = self._createTunnel()
+                s1, s2, s3, s4 = PCTestResources._createTunnel()
                 socks.extend([s1,s2,s3,s4])
                 pc.createTunnel(s2,s3)
 
-            pc.closeAllTunnels()
-
-            assert len(pc._sock) == 0
-            assert len(pc.selector.get_map()) == 0
-
-            assert pc.PROXY_HOST == PROXY_HOST
-            assert pc.PROXY_PORT == PROXY_PORT
-            assert pc.streamInterceptor == streamInterceptor
+            ret = pc.closeAllTunnels()
+            
+            assert ret is None
+            PCTestResources._assertClosedProxyConnections(pc)
+            PCTestResources._assertConstantAttributes(pc, PROXY_HOST, PROXY_PORT, selector)
         except Exception as e:
-            self._closeSockets(*socks)
+            PCTestResources._closeSockets(*socks)
             raise e
-
-    
-
-## TODO: Take a look at the method ProxyConnections.setupProxyToServerSocket
-## -- Should this be here??
-## Isn't the whole point of ProxyConnections to be a dict-like object
-## ==> Therefore it probably shouldn't handle connection setup
-## NOTE: Maybe move it over to TCPProxyServer class
-    
-
