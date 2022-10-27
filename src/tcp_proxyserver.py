@@ -1,4 +1,5 @@
 
+from abc import ABCMeta
 import ipaddress
 import selectors
 import socket
@@ -98,10 +99,10 @@ class ProxyTunnel:
 
 @dataclass
 class ProxyConnections:
-    PROXY_HOST: str = field(init=True)
-    PROXY_PORT: int = field(init=True)
-    streamInterceptor: StreamInterceptor = field(init=True)
-    selector: selectors.BaseSelector = field(init=False, default_factory=selectors.DefaultSelector)
+    PROXY_HOST: str
+    PROXY_PORT: int
+    streamInterceptor: StreamInterceptor
+    selector: selectors.BaseSelector
 
     _sock: Dict[socket.socket, ProxyTunnel] = field(init=False, default_factory=dict)
 
@@ -186,6 +187,7 @@ class ProxyConnections:
 
 
 ## TODO: Add context manager
+## TODO: Make into abst
 @dataclass
 class TCPProxyServer:
     HOST: str
@@ -194,22 +196,19 @@ class TCPProxyServer:
     PROXY_PORT: int
     streamInterceptor: StreamInterceptor
 
-    serverSocket: socket.socket = field(init=False, default=None)
-    selector: selectors.BaseSelector = field(init=False)
-
+    serverSocket: socket.socket = field(init=False, repr=False)
+    selector: selectors.BaseSelector = field(init=False, repr=False, default_factory=selectors.DefaultSelector)
 
     def __post_init__(self):
         logging.basicConfig(filename="server.log", level=logging.DEBUG)
         self._setupDataStructures()
         self._setupSignalHandlers()
-        self.eventLoopFlag: bool = True
+        self._exitFlag: bool = False
 
 
     def _setupDataStructures(self):
-        ## TODO: Add argument for StreamInterception for ProxyConnections construction
-        self.proxyHandlerDescriptor = proxyHandlerDescriptor(self.PROXY_HOST, self.PROXY_PORT, self.streamInterceptor)
-        self.proxyConnections = ProxyConnections(self.PROXY_HOST, self.PROXY_PORT, self.streamInterceptor)
-
+        self.selector = selectors.DefaultSelector()
+        self.proxyConnections = ProxyConnections(self.PROXY_HOST, self.PROXY_PORT, self.streamInterceptor, self.selector)
 
     def _setupSignalHandlers(self):
         try:
@@ -231,14 +230,12 @@ class TCPProxyServer:
 
 
     def _setup(self) -> None:
-        self.selector = selectors.DefaultSelector()
-        self.proxyConnections.selector = self.selector
         return self._setupServerSocket()
 
 
     def _executeEventLoop(self) -> None:
         self.logDebug("Server", "Server-Running", "Success")
-        while self.eventLoopFlag:
+        while self._exitFlag is False:
             ## TODO: Modify the timeout??
             events = self.selector.select(timeout=2.0)
             for selectorKey, bitmask in events:
@@ -270,9 +267,11 @@ class TCPProxyServer:
             self.serverSocket.listen()
             self.serverSocket.setblocking(False)
             return True
-        except OSError:
+        except OSError as e:
             print(f"Socket Setup Error: The address has already been bound")
-            return False
+            self.serverSocket.close()
+            self.serverSocket = None
+            raise e
 
 
     def __registerServerSocket(self) -> None:
@@ -316,7 +315,7 @@ class TCPProxyServer:
         
 
     def exit(self) -> None:
-        self.eventLoopFlag = False
+        self._exitFlag = False
     
 
    ## Required parameters by signal handler
