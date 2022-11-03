@@ -362,6 +362,71 @@ class Test_ProxyServer_Init:
         ## server2 should never be created
         TPSTestResources.assertConstantAttributes(server1, HOST, PORT, PROXY_HOST, PROXY_PORT, streamInterceptor)
 
+
+
+
+class Test_ProxyServer_connectionSetup:
+    ## single connection
+    def test_singleConnection(self, createSingleThreadTCPProxyServer, createBackendEchoServer) -> None:
+        HOST, PORT, PROXY_HOST, PROXY_PORT, interceptor, proxyServerThreadWrapper = createSingleThreadTCPProxyServer
+        proxyServer = proxyServerThreadWrapper.proxyServer
+        echoServer = createBackendEchoServer
+
+        ## Run servers
+        echoServer.run()
+        proxyServerThreadWrapper.run()
+
+        ## Setup a single client connection
+        clientSocket = TPSTestResources.setupConnection(proxyServer)
+        connections = [clientSocket]
+        echoServer.awaitConnectionCount(1)
+        proxyServerThreadWrapper.awaitConnectionCount(1)
+
+        ## Assertions
+        try:
+            TPSTestResources.assertConstantAttributes(proxyServer, HOST, PORT, PROXY_HOST, PROXY_PORT, interceptor)
+            TPSTestResources.assertSelectorState(proxyServer, connections)
+            TPSTestResources.assertProxyConnectionsState(proxyServer, connections)
+        except Exception as e:
+            print(f"Exception raised: {e}")
+            raise e
+        finally:
+            clientSocket.close()
+
+
+
+    def test_multipleConnections(self, createSingleThreadTCPProxyServer, createBackendEchoServer) -> None:
+        HOST, PORT, PROXY_HOST, PROXY_PORT, interceptor, proxyServerThreadWrapper = createSingleThreadTCPProxyServer
+        proxyServer = proxyServerThreadWrapper.proxyServer
+        echoServer = createBackendEchoServer
+
+        ## Run servers
+        echoServer.run()
+        proxyServerThreadWrapper.run()
+
+        ## Setup a single client connection
+        connectionSize = 100
+        connections = [TPSTestResources.setupConnection(proxyServer) for i in range(connectionSize)]
+        
+        echoServer.awaitConnectionCount(connectionSize)
+        proxyServerThreadWrapper.awaitConnectionCount(connectionSize)
+
+        ## Assertions
+        try:
+            ## we should check the following
+            TPSTestResources.assertConstantAttributes(proxyServer, HOST, PORT, PROXY_HOST, PROXY_PORT, interceptor)
+            TPSTestResources.assertSelectorState(proxyServer, connections)
+            TPSTestResources.assertProxyConnectionsState(proxyServer, connections)
+        except Exception as e:
+            print(f"Exception raised: {e}")
+            raise e
+        finally:
+            for sock in connections:
+                sock.close()
+
+
+
+
 class Test_ProxyServer_connectionTeardown:
     pass
 
