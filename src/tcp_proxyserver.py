@@ -1,5 +1,8 @@
 
 from abc import ABCMeta
+import os
+import time
+import threading
 import ipaddress
 import selectors
 import socket
@@ -180,11 +183,21 @@ class ProxyConnections:
 
     def setupProxyToServerSocket(self) -> socket.socket:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.connect((self.PROXY_HOST, self.PROXY_PORT))
+        try:
+            s.connect((self.PROXY_HOST, self.PROXY_PORT))
+        except socket.error as e:
+            print(f"Failed to setup proxy to server connection @ {self.PROXY_HOST}:{self.PROXY_PORT}: {e}")
+            raise e
+
         return s
 
 
 
+## BUG: It seems that the eventLoop may not be handling requests when the selector is polled
+## --> The events are retrieved, and then immediately polled again
+## --> I ran this for a single TCP connectino setup (no data sent)
+## ==> This could be common (e.g. bytes are being transfered during TCP setup)
+## --> Need to doule check though!!!
 
 ## TODO: Add context manager
 ## TODO: Make into abst
@@ -195,99 +208,113 @@ class TCPProxyServer:
     PROXY_HOST: str
     PROXY_PORT: int
     streamInterceptor: StreamInterceptor
+    addressReuse: bool = field(default=False)
 
     serverSocket: socket.socket = field(init=False, repr=False)
     selector: selectors.BaseSelector = field(init=False, repr=False, default_factory=selectors.DefaultSelector)
+    proxyConnections: ProxyConnections = field(init=False, repr=True)
+    _exitFlag: bool = field(init=False, default=False)
+    _terminated: threading.Event = field(init=False, default_factory=threading.Event)
 
     def __post_init__(self):
-        logging.basicConfig(filename="server.log", level=logging.DEBUG)
-        self._setupDataStructures()
-        self._setupSignalHandlers()
-        self._exitFlag: bool = False
+        try:
+            logging.basicConfig(filename="server.log", level=logging.DEBUG)
+            self._setupDataStructures()
+            self._setupSignalHandlers()
+            self._logDebugMessage("Server", "Server-Setup", "Success")
+        except Exception as e:
+            self._logDebugMessage("Server", "Server-Setup", "Failure")
+            raise e
 
 
     def _setupDataStructures(self):
         self.selector = selectors.DefaultSelector()
         self.proxyConnections = ProxyConnections(self.PROXY_HOST, self.PROXY_PORT, self.streamInterceptor, self.selector)
+        self._setupServerSocket()
+
 
     def _setupSignalHandlers(self):
         try:
-            signal.signal(signal.SIGBREAK, self.sig_handler)
+            signal.signal(signal.SIGBREAK, self._sigHandler)
         except AttributeError: pass ## Avoid errors caused by OS differences
         try:
-            signal.signal(signal.SIGINT, self.sig_handler)
+            signal.signal(signal.SIGINT, self._sigHandler)
         except AttributeError: pass ## Avoid errors caused by OS differences
 
 
     def run(self) -> None:
-        if self._setup() is True:
-            self.logDebug("Server", "Server-Setup", "Success")
-            return self._executeEventLoop()
-        else:
-            self.logDebug("Server", "Server-Setup", "Failure")
-
-        return False
-
-
-    def _setup(self) -> None:
-        return self._setupServerSocket()
+        return self._executeEventLoop()
 
 
     def _executeEventLoop(self) -> None:
-        self.logDebug("Server", "Server-Running", "Success")
+        self._logDebugMessage("Server", "Server-Running", "Success")
         while self._exitFlag is False:
             ## TODO: Modify the timeout??
-            events = self.selector.select(timeout=2.0)
+            events = self.selector.select(timeout=0.1)
             for selectorKey, bitmask in events:
                 if selectorKey.data == "ServerSocket":
-                    self.__acceptConnection()
+                    # print("TCPProxyServer - Accepting new connection")
+                    self._acceptConnection()
                 else:
-                    self.__serviceConnection(selectorKey, bitmask)
+                    # print(f"TCPProxyServer - Servicing connection: {selectorKey}")
+                    self._serviceConnection(selectorKey, bitmask)
+
+        self._close()
+
+    def _close(self):
         try:
-            print("Server is Terminating")
             self.proxyConnections.closeAllTunnels()
             self.serverSocket.close()
-            self.logDebug("Server", "Server-Termination", "Success")
-        except (KeyboardInterrupt, Exception):
-            self.logDebug("Server", "Server-Termination" "Warning")
+            self._logDebugMessage("Server", "Server-Termination", "Success")
+        except (KeyboardInterrupt, Exception) as e:
+            self._logDebugMessage("Server", "Server-Termination" "Warning")
+            if not isinstance(e, KeyboardInterrupt):
+                raise e
+        finally:
+            self._terminated.set()
 
 
     def _setupServerSocket(self) -> bool:
-        if self.__createServerSocket() == False: return False
-        self.__registerServerSocket()
+        self._createServerSocket()
+        self._registerServerSocket()
         print(f"Server listening on {self.HOST}:{self.PORT}\n\n")
-        return True
 
 
     ##TODO: Provide exception handling for setting up the server sock
-    def __createServerSocket(self) -> bool:
+    def _createServerSocket(self) -> bool:
         try:
             self.serverSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            if self.addressReuse:
+                self.serverSocket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.serverSocket.bind((self.HOST, self.PORT))
             self.serverSocket.listen()
             self.serverSocket.setblocking(False)
-            return True
-        except OSError as e:
-            print(f"Socket Setup Error: The address has already been bound")
+        except socket.error as e:
+            print(f"TCPProxy Server Socker Error: {e}")
             self.serverSocket.close()
-            self.serverSocket = None
             raise e
 
 
-    def __registerServerSocket(self) -> None:
+    def _registerServerSocket(self) -> None:
         self.selector.register(self.serverSocket, selectors.EVENT_READ, data="ServerSocket")
 
 
-    def __acceptConnection(self) -> None:
+    def _acceptConnection(self) -> None:
         clientToProxySocket, (hostname, port) = self.serverSocket.accept()
-        proxyToServerSocket = self.proxyConnections.setupProxyToServerSocket()
+        try:
+            proxyToServerSocket = self.proxyConnections.setupProxyToServerSocket()
+        except socket.error as e:
+            clientToProxySocket.close()
+            ## socket hasn't been registered yet, so no need to unregister
+            logging.info(f"{datetime.now()}\t{hostname}\t{port}\tRejected\tConnection-Rejected\tFailure")
+            return None
+
         self.proxyConnections.createTunnel(clientToProxySocket, proxyToServerSocket)
         logging.info(f"{datetime.now()}\t{hostname}\t{port}\tUndefined\tConnection-Accepted\tSuccess")
         
 
-    def __serviceConnection(self, selectorKey: selectors.SelectorKey, bitmask: int) -> None:
+    def _serviceConnection(self, selectorKey: selectors.SelectorKey, bitmask: int) -> None:
         sock = selectorKey.fileobj
-        data = selectorKey.data
 
         ## NOTE: It's possible the the other socket of the tunnel closed the tunnel
         proxyTunnel = self.proxyConnections.get(sock)
@@ -297,30 +324,32 @@ class TCPProxyServer:
         ## In order to transfer from one socket, to another, we need to create buffers between them
         if bitmask & selectors.EVENT_READ:
             ## Read data from socket into buffer
-            out = proxyTunnel.read(sock)
+            out = proxyTunnel.readFrom(sock)
             ## If socket is closed, close tunnel
             if out is None:
                 return self.proxyConnections.closeTunnel(proxyTunnel)
 
         if bitmask & selectors.EVENT_WRITE:
             ## Writes data from buffer into socket (if any)
-            out = proxyTunnel.write(sock)
+            out = proxyTunnel.writeTo(sock)
             ## If socket is closed, close tunnel
             if out is None:
                 return self.proxyConnections.closeTunnel(proxyTunnel)
             
 
-    def logDebug(self, user: str = "Server", eventType: str = "Default", description: str = "Default",) -> None:
+    def _logDebugMessage(self, user: str = "Server", eventType: str = "Default", description: str = "Default",) -> None:
         logging.debug(f"{datetime.now()}\t{self.HOST}\t{self.PORT}\t{user}\t{eventType}\t{description}")
         
 
-    def exit(self) -> None:
-        self._exitFlag = False
+    def close(self, blocking: bool = True) -> None:
+        self._exitFlag = True
+        self._terminated.wait()
+
     
 
    ## Required parameters by signal handler
-    def sig_handler(self, signum, frame) -> None:
-        self.exit()
+    def _sigHandler(self, signum, frame) -> None:
+        self.close()
 
 
 
