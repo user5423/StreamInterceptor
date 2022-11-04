@@ -34,6 +34,9 @@ class TPSTestResources:
         class EchoServer:
             def __init__(self, HOST: str, PORT: int) -> None:
                 self._threads = []
+                self._threadExit = []
+                self._threadLock = threading.Lock()
+
                 self._exitFlag = False
                 self._mainThread = threading.Thread(target=self._run, args=(HOST, PORT,))
                 self._selector = selectors.DefaultSelector()
@@ -42,7 +45,7 @@ class TPSTestResources:
                 self._counterTarget = 0
                 self._counterCurrent = 0
 
-            def _run(self, HOST, PORT) -> None:
+            def _run(self, HOST: str, PORT: int) -> None:
                 # print(f"Starting Echo Server @ {HOST}:{PORT}")
                 with socket.socket() as serverSock:
                     try:
@@ -53,7 +56,7 @@ class TPSTestResources:
                     except Exception as e:
                         print(f"EchoServer server Exception: {e}")
                         raise e
-                    # print(f"Running Echo Server @ {HOST}:{PORT}")
+                    print(f"Running Echo Server @ {HOST}:{PORT}")
 
                     try:
                         while self._exitFlag is False:
@@ -62,26 +65,29 @@ class TPSTestResources:
                             except BlockingIOError:
                                 continue
 
-                            self._updateCounterEvent()
-                            connThread = threading.Thread(target=self._serviceConnection, args=(conn,))
-                            self._threads.append(connThread)
-                            connThread.start()
+                            self._instantiateNewThread(conn)
+                            self._updateCounterEvent(1)
                     except Exception as e:
                         print(f"EchoServer exception: {e}")
+                        raise e
 
-            def _serviceConnection(self, conn: socket.socket):
+            def _serviceConnection(self, conn: socket.socket, index: int) -> None:
                 with conn:
-                    conn.setblocking(False)
-                    while self._exitFlag is False:
-                        try:
-                            data = conn.recv(1024)
-                        except socket.error:
-                            continue
-
-                        if not data:
-                            break
-                        conn.sendall(data)
-                ## print("EchoServer connection closed")
+                    try:
+                        conn.setblocking(False)
+                        while self._exitFlag is False and self._threadExit[index] is False:
+                            try:
+                                data = conn.recv(1024)
+                            except OSError:
+                                continue
+                            if not data:
+                                break
+                            conn.sendall(data)
+                    except Exception as e:
+                        print(f"EchoServer - Exception raised when servicing echo connection: {conn} - {e}")
+                        raise e
+                    finally:
+                        self._updateCounterEvent(-1)
 
             def run(self) -> None:
                 return self._mainThread.start()
@@ -92,27 +98,36 @@ class TPSTestResources:
                 ## close mainThread
                 self._mainThread.join()
                 ## close connection threads
-                for thread in self._threads:
-                    # print("EchoServer - Closing child thread")
-                    ## socket closing are handled by context managers
-                    thread.join()
+                with self._threadLock:
+                    for thread in self._threads:
+                        # print("EchoServer - Closing child thread")
+                        ## socket closing are handled by context managers
+                        thread.join()
 
-            def _updateCounterEvent(self):
+            def _updateCounterEvent(self, val: int) -> None:
                 with self._counterLock:
-                    self._counterCurrent += 1
-                    if self._counterCurrent >= self._counterTarget:
+                    self._counterCurrent += val
+                    # print(f"current counter: {self._counterCurrent}")
+                    if self._counterCurrent == self._counterTarget:
                         self._counterEvent.set()
 
-            def awaitConnectionCount(self, count: int):
+            def _instantiateNewThread(self, conn: socket.socket) -> None:
+                with self._threadLock:
+                    with self._counterLock:
+                        connThread = threading.Thread(target=self._serviceConnection, args=(conn, self._counterCurrent))
+                    self._threads.append(connThread)
+                    self._threadExit.append(False)
+                
+                connThread.start()
+
+            def awaitConnectionCount(self, count: int) -> None:
                 with self._counterLock:
                     self._counterTarget = count
-                    if self._counterCurrent >= self._counterTarget:
+                    if self._counterCurrent == self._counterTarget:
                         self._counterEvent.set()
-                    else:
-                        self._counterEvent.clear()
-            
+                
                 self._counterEvent.wait()
-                # print("returned from await")
+                self._counterEvent.clear()
                 return None
 
         return EchoServer(HOST, PORT)
@@ -276,7 +291,7 @@ def createSingleThreadTCPProxyServer(createTCPProxyServer):
 
         def awaitConnectionCount(self, count: int) -> None:
             ## we'll use a spinlock to avoid modifying the class for the sake of testing
-            while len(self.proxyServer.proxyConnections) != count * 2: ## for each user connection, the server manages 2 connections
+            while len(self.proxyServer.proxyConnections._sock) != count * 2: ## for each user connection, the server manages 2 connections
                 pass
             return None
 
@@ -284,10 +299,10 @@ def createSingleThreadTCPProxyServer(createTCPProxyServer):
     proxyServerWrapper = threadWrapper(proxyServer)
     yield HOST, PORT, PROXY_HOST, PROXY_PORT, interceptor, proxyServerWrapper
 
-    print("TCPProxyServer closing")
+    # print("TCPProxyServer closing")
     proxyServer.close(blocking=True)
     proxyServerWrapper.thread.join()
-    print("TCPProxyServer closed")
+    # print("TCPProxyServer closed")
 
 
 @pytest.fixture()
@@ -296,9 +311,9 @@ def createBackendEchoServer(createTCPProxyServer):
     echoServer = TPSTestResources.setupEchoServer(PROXY_HOST, PROXY_PORT)
     yield echoServer
 
-    print("EchoServer closing")
+    # print("EchoServer closing")
     echoServer.close()
-    print("EchoServer closed")
+    # print("EchoServer closed")
 
 
 
@@ -366,48 +381,20 @@ class Test_ProxyServer_Init:
 
 
 class Test_ProxyServer_connectionSetup:
-    ## single connection
-    def test_singleConnection(self, createSingleThreadTCPProxyServer, createBackendEchoServer) -> None:
-        HOST, PORT, PROXY_HOST, PROXY_PORT, interceptor, proxyServerThreadWrapper = createSingleThreadTCPProxyServer
+    def _assertConnectionSetup(self, echoServer, proxyServerThreadWrapper, proxyServerArgs, connectionCount):
+        ## Setting up
         proxyServer = proxyServerThreadWrapper.proxyServer
-        echoServer = createBackendEchoServer
+        HOST, PORT, PROXY_HOST, PROXY_PORT, interceptor = proxyServerArgs
 
         ## Run servers
         echoServer.run()
         proxyServerThreadWrapper.run()
 
         ## Setup a single client connection
-        clientSocket = TPSTestResources.setupConnection(proxyServer)
-        connections = [clientSocket]
-        echoServer.awaitConnectionCount(1)
-        proxyServerThreadWrapper.awaitConnectionCount(1)
-
-        ## Assertions
-        try:
-            TPSTestResources.assertConstantAttributes(proxyServer, HOST, PORT, PROXY_HOST, PROXY_PORT, interceptor)
-            TPSTestResources.assertSelectorState(proxyServer, connections)
-            TPSTestResources.assertProxyConnectionsState(proxyServer, connections)
-        except Exception as e:
-            print(f"Exception raised: {e}")
-            raise e
-        finally:
-            clientSocket.close()
-
-
-
-    def test_multipleConnections(self, createSingleThreadTCPProxyServer, createBackendEchoServer) -> None:
-        HOST, PORT, PROXY_HOST, PROXY_PORT, interceptor, proxyServerThreadWrapper = createSingleThreadTCPProxyServer
-        proxyServer = proxyServerThreadWrapper.proxyServer
-        echoServer = createBackendEchoServer
-
-        ## Run servers
-        echoServer.run()
-        proxyServerThreadWrapper.run()
-
-        ## Setup a single client connection
-        connectionSize = 100
+        connectionSize = connectionCount
         connections = [TPSTestResources.setupConnection(proxyServer) for i in range(connectionSize)]
         
+        ## wait until the connections have been setup
         echoServer.awaitConnectionCount(connectionSize)
         proxyServerThreadWrapper.awaitConnectionCount(connectionSize)
 
@@ -423,14 +410,26 @@ class Test_ProxyServer_connectionSetup:
         finally:
             for sock in connections:
                 sock.close()
+                
+
+    def test_singleConnection(self, createSingleThreadTCPProxyServer, createBackendEchoServer) -> None:
+        proxyServerThreadWrapper = createSingleThreadTCPProxyServer[-1]
+        proxyServerArgs = createSingleThreadTCPProxyServer[:-1]
+        echoServer = createBackendEchoServer
+
+        ## Perform assertions
+        connectionCount = 1
+        self._assertConnectionSetup(echoServer, proxyServerThreadWrapper, proxyServerArgs, connectionCount)
 
 
+    def test_multipleConnections(self, createSingleThreadTCPProxyServer, createBackendEchoServer) -> None:
+        proxyServerThreadWrapper = createSingleThreadTCPProxyServer[-1]
+        proxyServerArgs = createSingleThreadTCPProxyServer[:-1]
+        echoServer = createBackendEchoServer
 
-
-class Test_ProxyServer_connectionTeardown:
-    pass
-
-
+        ## Perform assertions
+        connectionCount = 100
+        self._assertConnectionSetup(echoServer, proxyServerThreadWrapper, proxyServerArgs, connectionCount)
 
 class Test_ProxyServer_connectionHandling:
     ...
