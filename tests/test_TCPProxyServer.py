@@ -9,6 +9,7 @@ import threading
 from typing import Tuple, List
 import pytest
 import psutil
+import errno
 
 sys.path.insert(0, os.path.join("..", "src"))
 sys.path.insert(0, "src")
@@ -295,6 +296,9 @@ def createSingleThreadTCPProxyServer(createTCPProxyServer):
                 pass
             return None
 
+        def close(self, blocking: bool) -> None:
+            return self.proxyServer.close(blocking=blocking)
+
 
     proxyServerWrapper = threadWrapper(proxyServer)
     yield HOST, PORT, PROXY_HOST, PROXY_PORT, interceptor, proxyServerWrapper
@@ -430,6 +434,141 @@ class Test_ProxyServer_connectionSetup:
         ## Perform assertions
         connectionCount = 100
         self._assertConnectionSetup(echoServer, proxyServerThreadWrapper, proxyServerArgs, connectionCount)
+
+
+
+
+@pytest.fixture()
+def createEchoProxyEnvironment(createSingleThreadTCPProxyServer, createBackendEchoServer):
+        ## Setting up
+        proxyServerThreadWrapper = createSingleThreadTCPProxyServer[-1]
+        proxyServerArgs = createSingleThreadTCPProxyServer[:-1]
+        echoServer = createBackendEchoServer
+
+        ## Run servers
+        echoServer.run()
+        proxyServerThreadWrapper.run()
+
+        yield echoServer, proxyServerThreadWrapper, proxyServerArgs,
+
+
+class Test_ProxyServer_Termination:
+    def _isSockClosed(self, sock: socket.socket) -> bool:
+        ## if the fd has been released (then sock closed)
+        if sock.fileno() == -1:
+            return True
+
+        ## otherwise, we can recv to check if FIN was sent
+        sock.setblocking(False)
+        try:
+            data = sock.recv(1024)
+            if len(data) == 0:
+                return True
+            return False
+        except socket.error as e:
+            error = e.args[0]
+            if error in (errno.EAGAIN, errno.EWOULDBLOCK):
+                return False
+            return True
+
+    def _removeDisconnectedSockets(self, connections: List[socket.socket]) -> List[socket.socket]:
+        refreshedConnections = []
+        for conn in connections:
+            if self._isSockClosed(conn) is False:
+                refreshedConnections.append(conn)
+        return refreshedConnections
+
+    def _assertConnectionTeardown(self, echoServer, proxyServerThreadWrapper, proxyServerArgs, connectionsToCreate, connectionsToClose, connectionCloseMethod):
+        ## Setting up
+        proxyServer = proxyServerThreadWrapper.proxyServer
+        HOST, PORT, PROXY_HOST, PROXY_PORT, interceptor = proxyServerArgs
+
+        ## Setup a single client connection and wait until the connections have been accepted and handled
+        print("setting up user connections, and awaiting on proxy and server setup")
+        connections = [TPSTestResources.setupConnection(proxyServer) for i in range(connectionsToCreate)]
+        echoServer.awaitConnectionCount(connectionsToCreate)
+        proxyServerThreadWrapper.awaitConnectionCount(connectionsToCreate)
+
+        ## we now kill connections - this depends on how the test case would like
+        print("closing connections using custom handler")
+        connectionCloseMethod(proxyServerThreadWrapper, echoServer, connections, connectionsToClose)
+
+        ## and wait until these have been closed
+        print("awaiting dropped connection cleanup")
+        remainingConnections = connectionsToCreate - connectionsToClose
+        echoServer.awaitConnectionCount(remainingConnections)
+        proxyServerThreadWrapper.awaitConnectionCount(remainingConnections)
+
+        ## refresh connections (we just killed a few connections so let's get an array with only active ones)
+        print("refreshing dropped user connections")
+        connections = self._removeDisconnectedSockets(connections)
+        
+        ## Assertions
+        try:
+            ## we should check the following
+            TPSTestResources.assertConstantAttributes(proxyServer, HOST, PORT, PROXY_HOST, PROXY_PORT, interceptor)
+            TPSTestResources.assertSelectorState(proxyServer, connections)
+            TPSTestResources.assertProxyConnectionsState(proxyServer, connections)
+        except Exception as e:
+            # print(f"Exception raised: {e}")
+            raise e
+        finally:
+            for sock in connections:
+                sock.close()
+            print("done")
+
+    ## Methods to close connectinos
+
+    @staticmethod
+    def _userTerminatesConnections(proxyServerThreadWrapper, echoServer, connections: List[socket.socket], connectionsToKill: int):
+        for i in range(connectionsToKill):
+            connections[i].close()
+
+    @staticmethod
+    def _serverTerminatesConnections(proxyThreadWrapper, echoServer, connections: List[socket.socket], connectionsToKill: int):
+        with echoServer._threadLock:
+            for i in range(connectionsToKill):
+                echoServer._threadExit[i] = True
+
+    @staticmethod
+    def _serverShutdown(proxyThreadWrapper, echoServer, connections: List[socket.socket], connectionsToKill: int):
+        echoServer.close()
+
+
+    def test_singleConnection_userDisconnect(self, createEchoProxyEnvironment) -> None:
+        echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
+
+        connectionsToCreate = 1
+        connectionsToClose = 1
+        self._assertConnectionTeardown(echoServer, proxyServerThreadWrapper, proxyServerArgs,
+                 connectionsToCreate, connectionsToClose, self._userTerminatesConnections)
+
+    def test_multipleConnections_userDisconnect(self, createEchoProxyEnvironment) -> None:
+        echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
+
+        connectionsToCreate = 2
+        connectionsToClose = 1
+        self._assertConnectionTeardown(echoServer, proxyServerThreadWrapper, proxyServerArgs,
+                 connectionsToCreate, connectionsToClose, self._userTerminatesConnections)
+
+    def test_singleConnection_serverDisconnect(self, createEchoProxyEnvironment) -> None:
+        echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
+
+        connectionsToCreate = 1
+        connectionsToClose = 1
+        self._assertConnectionTeardown(echoServer, proxyServerThreadWrapper, proxyServerArgs,
+                 connectionsToCreate, connectionsToClose, self._serverTerminatesConnections)
+
+    def test_multipleConnections_serverDisconnect(self, createEchoProxyEnvironment) -> None:
+        echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
+
+        connectionsToCreate = 5
+        connectionsToClose = 3
+        self._assertConnectionTeardown(echoServer, proxyServerThreadWrapper, proxyServerArgs,
+                 connectionsToCreate, connectionsToClose, self._serverTerminatesConnections)
+
+
+
 
 class Test_ProxyServer_connectionHandling:
     ...
