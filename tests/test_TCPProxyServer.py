@@ -455,21 +455,18 @@ def createEchoProxyEnvironment(createSingleThreadTCPProxyServer, createBackendEc
 class Test_ProxyServer_Termination:
     def _isSockClosed(self, sock: socket.socket) -> bool:
         ## if the fd has been released (then sock closed)
-        if sock.fileno() == -1:
-            return True
+        if sock.fileno() == -1: return True
 
         ## otherwise, we can recv to check if FIN was sent
         sock.setblocking(False)
         try:
             data = sock.recv(1024)
-            if len(data) == 0:
-                return True
-            return False
+            ## if the data is empty b"", then we the sock is closed (return True)
+            return len(data) == 0
         except socket.error as e:
             error = e.args[0]
-            if error in (errno.EAGAIN, errno.EWOULDBLOCK):
-                return False
-            return True
+            ## if error is one of these we return False (the socket is not closed)
+            return not error in (errno.EAGAIN, errno.EWOULDBLOCK)
 
     def _removeDisconnectedSockets(self, connections: List[socket.socket]) -> List[socket.socket]:
         refreshedConnections = []
@@ -510,12 +507,10 @@ class Test_ProxyServer_Termination:
             TPSTestResources.assertSelectorState(proxyServer, connections)
             TPSTestResources.assertProxyConnectionsState(proxyServer, connections)
         except Exception as e:
-            # print(f"Exception raised: {e}")
+            print(f"Exception raised: {e}")
             raise e
         finally:
-            for sock in connections:
-                sock.close()
-            print("done")
+            for sock in connections: sock.close()
 
     ## Methods to close connectinos
 
@@ -534,10 +529,13 @@ class Test_ProxyServer_Termination:
     def _serverShutdown(proxyThreadWrapper, echoServer, connections: List[socket.socket], connectionsToKill: int):
         echoServer.close()
 
+    @staticmethod
+    def _proxyShutdown(proxyThreadWrapper, echoServer, connections: List[socket.socket], connectionsToKill: int):
+        proxyThreadWrapper.proxyServer.close()
+
 
     def test_singleConnection_userDisconnect(self, createEchoProxyEnvironment) -> None:
         echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
-
         connectionsToCreate = 1
         connectionsToClose = 1
         self._assertConnectionTeardown(echoServer, proxyServerThreadWrapper, proxyServerArgs,
@@ -545,9 +543,8 @@ class Test_ProxyServer_Termination:
 
     def test_multipleConnections_userDisconnect(self, createEchoProxyEnvironment) -> None:
         echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
-
-        connectionsToCreate = 2
-        connectionsToClose = 1
+        connectionsToCreate = 50
+        connectionsToClose = 30
         self._assertConnectionTeardown(echoServer, proxyServerThreadWrapper, proxyServerArgs,
                  connectionsToCreate, connectionsToClose, self._userTerminatesConnections)
 
@@ -561,11 +558,24 @@ class Test_ProxyServer_Termination:
 
     def test_multipleConnections_serverDisconnect(self, createEchoProxyEnvironment) -> None:
         echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
-
-        connectionsToCreate = 5
-        connectionsToClose = 3
+        connectionsToCreate = 50
+        connectionsToClose = 30
         self._assertConnectionTeardown(echoServer, proxyServerThreadWrapper, proxyServerArgs,
                  connectionsToCreate, connectionsToClose, self._serverTerminatesConnections)
+
+    def test_multipleConnections_serverTerminate(self, createEchoProxyEnvironment) -> None:
+        echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
+        connectionsToCreate = 50
+        connectionsToClose = connectionsToCreate
+        self._assertConnectionTeardown(echoServer, proxyServerThreadWrapper, proxyServerArgs,
+                 connectionsToCreate, connectionsToClose, self._serverShutdown)
+
+    def test_multipleConnections_proxyTerminate(self, createEchoProxyEnvironment) -> None:
+        echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
+        connectionsToCreate = 50
+        connectionsToClose = connectionsToCreate
+        self._assertConnectionTeardown(echoServer, proxyServerThreadWrapper, proxyServerArgs,
+                 connectionsToCreate, connectionsToClose, self._proxyShutdown)
 
 
 
