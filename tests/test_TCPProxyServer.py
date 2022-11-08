@@ -6,16 +6,19 @@ import signal
 import socket
 import sys
 import threading
-from typing import Tuple, List
+from typing import Tuple, List, Dict, Callable
 import pytest
 import psutil
 import errno
+import random
+import string
+
 
 sys.path.insert(0, os.path.join("..", "src"))
 sys.path.insert(0, "src")
 from tcp_proxyserver import ProxyConnections, TCPProxyServer
 from _exceptions import *
-from _proxyDS import StreamInterceptor
+from _proxyDS import StreamInterceptor, Buffer
 from _testResources import PTTestResources
 
 class TPSTestResources:
@@ -27,7 +30,7 @@ class TPSTestResources:
                     proc.send_signal(signal.SIGTERM) # or SIGKILL
 
     @classmethod
-    def setupEchoServer(cls, HOST: str, PORT: int):
+    def setupEchoServer(cls, HOST: str, PORT: int) -> "EchoServer":
         ## Free the port
         # cls.freePort(PORT)
 
@@ -129,7 +132,6 @@ class TPSTestResources:
                 
                 self._counterEvent.wait()
                 self._counterEvent.clear()
-                return None
 
         return EchoServer(HOST, PORT)
 
@@ -145,7 +147,7 @@ class TPSTestResources:
         return clientSocket
 
     @classmethod
-    def runProxyServerInThread(cls, proxyServer: TCPProxyServer):
+    def runProxyServerInThread(cls, proxyServer: TCPProxyServer) -> threading.Thread:
         thread = threading.Thread(target=proxyServer.run)
         thread.start()
         return thread
@@ -182,7 +184,7 @@ class TPSTestResources:
         assert signal.getsignal(signal.SIGINT) == server._sigHandler
 
     @classmethod
-    def _retrieveTunnelSocksFromSelector(cls, proxyServer):
+    def _retrieveTunnelSocksFromSelector(cls, proxyServer: TCPProxyServer) -> Dict[Tuple, socket.socket]:
         registeredConnections = {}
         for _, key in proxyServer.selector.get_map().items():
             sock = key.fileobj
@@ -255,10 +257,48 @@ class TPSTestResources:
             
 
     @classmethod
-    def assertProxyTunnelsState(cls, proxyServer: TCPProxyServer, connections: List[socket.socket], connectionData: List[str]):
-        ## NOTE: Here we can evaluate the state of the bytes stored in the proxyTunnels
-        ...
+    def assertUserConnectionData(cls, connections: List[socket.socket], connectionData: List[bytes], bufferSize: int = 1024) -> None:
+        ## We want to check that the expected data has been received
+        for conn, expectedData in zip(connections, connectionData):
+            assert conn.recv(bufferSize, socket.MSG_PEEK) == expectedData
+    
+    @classmethod
+    def assertProxyTunnelsState(cls, proxyServer: TCPProxyServer, connections: List[socket.socket], connectionData: List[bytes]) -> None:
+        ## creates a map {peername: tunnelObject}
+        peernameToTunnel = {}
+        tunnels = list(proxyServer.proxyConnections._sock.values())
+        for tunnel in tunnels:
+            peernameToTunnel[tunnel.clientToProxySocket.getpeername()] = tunnel
 
+        ## now we can assert the buffer state
+        for index, connectionSock in enumerate(connections):
+            tunnel = peernameToTunnel[connectionSock.getsockname()]
+            
+            sendData = connectionData[index] ## sendData = recvData since it is an echo server
+            sendBuffer = tunnel.clientToServerBuffer
+            cls._assertProxyBufferState(sendData, sendBuffer)
+
+            recvData = sendData
+            recvBuffer = tunnel.serverToClientBuffer
+            cls._assertProxyBufferState(recvData, recvBuffer)
+
+    @classmethod
+    def _assertProxyBufferState(cls, testData: bytes, testBuffer: Buffer) -> None:
+        ## The data object is "full", so we will use the delimiters to split
+        ## -- It's possible to define multiple delimiters
+        ## Our check will compare with a single run of the buffer on flat data
+        ## --> i.e. instead of multiple chunks, a single chunk is sent
+        flatBuffer = Buffer(testBuffer.REQUEST_DELIMITERS)
+        flatBuffer._execRequestParsing(testData)
+
+        ## And then we will manually compare state between both buffers
+        ## NOTE: This assumes a single run of the flat buffer is correct
+        ## -- There already exist tests for the buffer
+        assert flatBuffer._requests == testBuffer._requests
+        assert flatBuffer._data == testBuffer._data
+        assert flatBuffer._MAX_BUFFER_SIZE == testBuffer._MAX_BUFFER_SIZE
+        assert flatBuffer.MAX_DELIMETER_LENGTH == testBuffer.MAX_DELIMETER_LENGTH
+        assert flatBuffer.REQUEST_DELIMETER_REGEX == testBuffer.REQUEST_DELIMETER_REGEX
 
 
 @pytest.fixture()
@@ -385,7 +425,7 @@ class Test_ProxyServer_Init:
 
 
 class Test_ProxyServer_connectionSetup:
-    def _assertConnectionSetup(self, echoServer, proxyServerThreadWrapper, proxyServerArgs, connectionCount):
+    def _assertConnectionSetup(self, echoServer , proxyServerThreadWrapper, proxyServerArgs: List[object], connectionCount: int) -> None:
         ## Setting up
         proxyServer = proxyServerThreadWrapper.proxyServer
         HOST, PORT, PROXY_HOST, PROXY_PORT, interceptor = proxyServerArgs
@@ -475,7 +515,8 @@ class Test_ProxyServer_Termination:
                 refreshedConnections.append(conn)
         return refreshedConnections
 
-    def _assertConnectionTeardown(self, echoServer, proxyServerThreadWrapper, proxyServerArgs, connectionsToCreate, connectionsToClose, connectionCloseMethod):
+    def _assertConnectionTeardown(self, echoServer, proxyServerThreadWrapper, proxyServerArgs: List[object],
+                                 connectionsToCreate: int, connectionsToClose: int, connectionCloseMethod: Callable[..., None]):
         ## Setting up
         proxyServer = proxyServerThreadWrapper.proxyServer
         HOST, PORT, PROXY_HOST, PROXY_PORT, interceptor = proxyServerArgs
@@ -513,7 +554,6 @@ class Test_ProxyServer_Termination:
             for sock in connections: sock.close()
 
     ## Methods to close connectinos
-
     @staticmethod
     def _userTerminatesConnections(proxyServerThreadWrapper, echoServer, connections: List[socket.socket], connectionsToKill: int):
         for i in range(connectionsToKill):
@@ -537,7 +577,7 @@ class Test_ProxyServer_Termination:
     def test_singleConnection_userDisconnect(self, createEchoProxyEnvironment) -> None:
         echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
         connectionsToCreate = 1
-        connectionsToClose = 1
+        connectionsToClose = connectionsToCreate
         self._assertConnectionTeardown(echoServer, proxyServerThreadWrapper, proxyServerArgs,
                  connectionsToCreate, connectionsToClose, self._userTerminatesConnections)
 
@@ -552,7 +592,7 @@ class Test_ProxyServer_Termination:
         echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
 
         connectionsToCreate = 1
-        connectionsToClose = 1
+        connectionsToClose = connectionsToCreate
         self._assertConnectionTeardown(echoServer, proxyServerThreadWrapper, proxyServerArgs,
                  connectionsToCreate, connectionsToClose, self._serverTerminatesConnections)
 
@@ -576,13 +616,3 @@ class Test_ProxyServer_Termination:
         connectionsToClose = connectionsToCreate
         self._assertConnectionTeardown(echoServer, proxyServerThreadWrapper, proxyServerArgs,
                  connectionsToCreate, connectionsToClose, self._proxyShutdown)
-
-
-
-
-class Test_ProxyServer_connectionHandling:
-    ...
-
-
-class Test_ProxyServer_shutdown:
-    pass
