@@ -13,11 +13,13 @@ proxyHandlerDescriptor = NamedTuple("ProxyHandlerData", [("PROXY_HOST", str), ("
 ## NOTE: This should be performed on a per protocol basis!!!
 class StreamInterceptor:
     ## NOTE: This needs to rewrite any requests to the real server
-    def clientToServerHook(self, requestChunk: bytes, buffer: "Buffer") -> None:
+    @staticmethod
+    def clientToServerHook(buffer: "Buffer", requestChunk: bytes) -> None:
         raise NotImplementedError
 
     ## NOTE: This needs to rewrite any responses back to the client
-    def serverToClientHook(self, responseChunk: bytes, buffer: "Buffer") -> None:
+    @staticmethod
+    def serverToClientHook(buffer: "Buffer", responseChunk: bytes) -> None:
         raise NotImplementedError
 
 
@@ -102,7 +104,8 @@ class Buffer:
         a request is completely parsed from the request queue 
         `buffer()._requests`"""
         ## TODO: Find a better way to bind the hook function to this self obj instance
-        self._requestHook = functools.partial(hook, self)
+        # self._requestHook = functools.partial(hook, self)
+        # self._requestHook = hook
         
 
     ############## Request Queue Operations ########################
