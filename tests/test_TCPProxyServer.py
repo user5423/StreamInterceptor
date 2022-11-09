@@ -6,12 +6,19 @@ import signal
 import socket
 import sys
 import threading
-from typing import Tuple, List, Dict, Callable
+from typing import Tuple, List, Dict, Callable, Generator
 import pytest
 import psutil
 import errno
 import random
 import string
+import queue
+import datetime
+import math
+
+from testhelper.TCPProxyServer import TPSTestResources
+from testhelper.DataTransferSimulator import DataTransferSimulator
+from _testResources import PTTestResources
 
 
 sys.path.insert(0, os.path.join("..", "src"))
@@ -19,286 +26,8 @@ sys.path.insert(0, "src")
 from tcp_proxyserver import ProxyConnections, TCPProxyServer
 from _exceptions import *
 from _proxyDS import StreamInterceptor, Buffer
-from _testResources import PTTestResources
-
-class TPSTestResources:
-    @classmethod
-    def freePort(cls, PORT: int) -> None:
-        for proc in psutil.process_iter():
-            for conns in proc.connections(kind='inet'):
-                if conns.laddr.port == PORT:
-                    proc.send_signal(signal.SIGTERM) # or SIGKILL
-
-    @classmethod
-    def setupEchoServer(cls, HOST: str, PORT: int) -> "EchoServer":
-        ## Free the port
-        # cls.freePort(PORT)
-
-        ## echo server defined (non performant but simple to set up)
-        class EchoServer:
-            def __init__(self, HOST: str, PORT: int) -> None:
-                self._threads = []
-                self._threadExit = []
-                self._threadLock = threading.Lock()
-
-                self._exitFlag = False
-                self._mainThread = threading.Thread(target=self._run, args=(HOST, PORT,))
-                self._selector = selectors.DefaultSelector()
-                self._counterEvent = threading.Event()
-                self._counterLock = threading.Lock()
-                self._counterTarget = 0
-                self._counterCurrent = 0
-
-            def _run(self, HOST: str, PORT: int) -> None:
-                # print(f"Starting Echo Server @ {HOST}:{PORT}")
-                with socket.socket() as serverSock:
-                    try:
-                        serverSock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                        serverSock.setblocking(False)
-                        serverSock.bind((HOST, PORT))
-                        serverSock.listen()
-                    except Exception as e:
-                        print(f"EchoServer server Exception: {e}")
-                        raise e
-                    print(f"Running Echo Server @ {HOST}:{PORT}")
-
-                    try:
-                        while self._exitFlag is False:
-                            try:
-                                conn, addr = serverSock.accept()
-                            except BlockingIOError:
-                                continue
-
-                            self._instantiateNewThread(conn)
-                            self._updateCounterEvent(1)
-                    except Exception as e:
-                        print(f"EchoServer exception: {e}")
-                        raise e
-
-            def _serviceConnection(self, conn: socket.socket, index: int) -> None:
-                with conn:
-                    try:
-                        conn.setblocking(False)
-                        while self._exitFlag is False and self._threadExit[index] is False:
-                            try:
-                                data = conn.recv(1024)
-                            except OSError:
-                                continue
-                            if not data:
-                                break
-                            conn.sendall(data)
-                    except Exception as e:
-                        print(f"EchoServer - Exception raised when servicing echo connection: {conn} - {e}")
-                        raise e
-                    finally:
-                        self._updateCounterEvent(-1)
-
-            def run(self) -> None:
-                return self._mainThread.start()
-
-            def close(self) -> None:
-                ## set exitFlag to exit eventLoop in self._run
-                self._exitFlag = True
-                ## close mainThread
-                self._mainThread.join()
-                ## close connection threads
-                with self._threadLock:
-                    for thread in self._threads:
-                        # print("EchoServer - Closing child thread")
-                        ## socket closing are handled by context managers
-                        thread.join()
-
-            def _updateCounterEvent(self, val: int) -> None:
-                with self._counterLock:
-                    self._counterCurrent += val
-                    # print(f"current counter: {self._counterCurrent}")
-                    if self._counterCurrent == self._counterTarget:
-                        self._counterEvent.set()
-
-            def _instantiateNewThread(self, conn: socket.socket) -> None:
-                with self._threadLock:
-                    with self._counterLock:
-                        connThread = threading.Thread(target=self._serviceConnection, args=(conn, self._counterCurrent))
-                    self._threads.append(connThread)
-                    self._threadExit.append(False)
-                
-                connThread.start()
-
-            def awaitConnectionCount(self, count: int) -> None:
-                with self._counterLock:
-                    self._counterTarget = count
-                    if self._counterCurrent == self._counterTarget:
-                        self._counterEvent.set()
-                
-                self._counterEvent.wait()
-                self._counterEvent.clear()
-
-        return EchoServer(HOST, PORT)
 
 
-    @classmethod
-    def setupConnection(cls, proxyServer: TCPProxyServer) -> socket.socket:
-        ## print("setting up connection")
-        ## setup client <--> proxy connection
-        clientSocket = socket.socket()
-        clientSocket.setblocking(True)
-        clientSocket.connect(proxyServer.serverSocket.getsockname())
-        ## The proxy <--> server connection is handled by `proxyServer`
-        return clientSocket
-
-    @classmethod
-    def runProxyServerInThread(cls, proxyServer: TCPProxyServer) -> threading.Thread:
-        thread = threading.Thread(target=proxyServer.run)
-        thread.start()
-        return thread
-
-    @classmethod
-    def assertConstantAttributes(cls, server: TCPProxyServer,
-        HOST, PORT, PROXY_HOST, PROXY_PORT, interceptor) -> None:
-        ## NOTE: There some ambiguity about which host refers to the
-        ## proxy interceptor and which one refers to the target service
-        ## At the moment
-        ## -> HOST == proxyInterceptor server
-        ## -> PROXY_HOST == target service server
-        assert server.HOST == HOST
-        assert server.PORT == PORT
-        assert server.PROXY_HOST == PROXY_HOST
-        assert server.PROXY_PORT == PROXY_PORT
-        assert server.streamInterceptor == interceptor
-        assert isinstance(server.selector, selectors.DefaultSelector)
-
-        ## Depends if we want to be strict
-        # assert isinstance(server.streamInterceptor, StreamInterceptor)
-        # assert interceptor in server.streamInterceptor.__mro__[1:]
-
-        ## What should happen is that the TCPProxyServer creates its own selector
-        ## This should be pased on to encompassed data structures
-        assert isinstance(server.proxyConnections, ProxyConnections)
-        assert server.proxyConnections.PROXY_HOST == server.PROXY_HOST
-        assert server.proxyConnections.PROXY_PORT == server.PROXY_PORT
-        assert server.proxyConnections.selector == server.selector
-
-        ## We need to check signal handlers have been set
-        ## NOTE: SIGNAL types are dependent on the host system
-        ## --> We'll focus on linux
-        assert signal.getsignal(signal.SIGINT) == server._sigHandler
-
-    @classmethod
-    def _retrieveTunnelSocksFromSelector(cls, proxyServer: TCPProxyServer) -> Dict[Tuple, socket.socket]:
-        registeredConnections = {}
-        for _, key in proxyServer.selector.get_map().items():
-            sock = key.fileobj
-            if proxyServer.serverSocket != sock:
-                registeredConnections[(sock.getsockname(), sock.getpeername())] = sock
-        return registeredConnections
-
-
-    @classmethod
-    def assertSelectorState(cls, proxyServer: TCPProxyServer, connections: List[socket.socket]) -> None:
-        ## it should be added to the selector (correct  key, no duplicates)
-        ## There should be two fd's socket server, and new connection and proxy
-        ## We check that the selector has the correct number of fd being polled
-        assert len(proxyServer.selector.get_map()) == 1 + len(connections)*2 ## serverSock + 2 endpoints for each connection
-
-        ## checking server socket is logged
-        serverSocketKey = proxyServer.selector.get_key(proxyServer.serverSocket)
-        assert serverSocketKey.data == "ServerSocket"
-        assert serverSocketKey.events == selectors.EVENT_READ
-
-        ## We create a set based on the peernames of the descriptors (then we can look them up)
-        ## NOTE: Be careful - There may be some weirdness (e.g. "" is equal to "0.0.0.0")
-        registeredSockNames = cls._retrieveTunnelSocksFromSelector(proxyServer)
-
-        ## for each user connection, there should be two sockets managed by server 
-        ## (this ensure equal number of types of sockets (clientTOProxy, and ProxyToServer))
-        assert len(proxyServer.selector.get_map()) == 1 + len(connections)*2 ## serverSock + 2 endpoints for each connection
-        assert len(registeredSockNames) == len(connections) * 2
-
-        ## Here we perform assertions on the client <--> proxy connections
-        for conn in connections:
-            connKey = (conn.getpeername(), conn.getsockname())
-            assert connKey in registeredSockNames
-            registeredSockNames.pop(connKey) ## remove from dict
-
-        ## Here we perform assertions on the proxy <--> server connections
-        for sock in registeredSockNames.values():
-            ## The peer should be the destination server for all proxy <--> server connections
-            peername = sock.getpeername()
-            assert peername[0] == proxyServer.PROXY_HOST
-            assert peername[1] == proxyServer.PROXY_PORT
-
-
-    @classmethod
-    def assertProxyConnectionsState(cls, proxyServer: TCPProxyServer, connections: List[socket.socket]) -> None:
-        ## proxyServer.proxyConnections contains two socket keys for each tunnel (hence multiply by 2)
-        assert len(proxyServer.proxyConnections._sock) == len(connections) * 2
-
-        ## NOTE: We will NOT take a look at the internal state of the proxyTunnels
-        tunnels = {}
-        for sock, tunnel in proxyServer.proxyConnections._sock.items():
-            if tunnels.get(tunnel) is None:
-                tunnels[tunnel] = set()
-            tunnels[tunnel].add(sock)
-
-        ## validate that each tunnel has two elements and that they are linked to the tunnel, 
-        ## they are not closed, and have correct peernames / socknames
-        for tunnel, socks in tunnels.items():
-            assert len(socks) == 2
-            assert tunnel.clientToProxySocket in socks
-            assert tunnel.clientToProxySocket.fileno() != -1
-            ## NOTE: Eventhough serverSock.accept() creates an ephemeral socket (it seems the new socket retains the same sockname as serverSock)
-            assert tunnel.clientToProxySocket.getsockname() == proxyServer.serverSocket.getsockname()
-
-            assert tunnel.proxyToServerSocket in socks
-            assert tunnel.proxyToServerSocket.fileno() != -1 # if socket is closed, socket.fileno() == -1
-            peerAddress =  tunnel.proxyToServerSocket.getpeername()
-            assert peerAddress[0] == proxyServer.PROXY_HOST
-            assert peerAddress[1] == proxyServer.PROXY_PORT
-            
-
-    @classmethod
-    def assertUserConnectionData(cls, connections: List[socket.socket], connectionData: List[bytes], bufferSize: int = 1024) -> None:
-        ## We want to check that the expected data has been received
-        for conn, expectedData in zip(connections, connectionData):
-            assert conn.recv(bufferSize, socket.MSG_PEEK) == expectedData
-    
-    @classmethod
-    def assertProxyTunnelsState(cls, proxyServer: TCPProxyServer, connections: List[socket.socket], connectionData: List[bytes]) -> None:
-        ## creates a map {peername: tunnelObject}
-        peernameToTunnel = {}
-        tunnels = list(proxyServer.proxyConnections._sock.values())
-        for tunnel in tunnels:
-            peernameToTunnel[tunnel.clientToProxySocket.getpeername()] = tunnel
-
-        ## now we can assert the buffer state
-        for index, connectionSock in enumerate(connections):
-            tunnel = peernameToTunnel[connectionSock.getsockname()]
-            
-            sendData = connectionData[index] ## sendData = recvData since it is an echo server
-            sendBuffer = tunnel.clientToServerBuffer
-            cls._assertProxyBufferState(sendData, sendBuffer)
-
-            recvData = sendData
-            recvBuffer = tunnel.serverToClientBuffer
-            cls._assertProxyBufferState(recvData, recvBuffer)
-
-    @classmethod
-    def _assertProxyBufferState(cls, testData: bytes, testBuffer: Buffer) -> None:
-        ## The data object is "full", so we will use the delimiters to split
-        ## -- It's possible to define multiple delimiters
-        ## Our check will compare with a single run of the buffer on flat data
-        ## --> i.e. instead of multiple chunks, a single chunk is sent
-        flatBuffer = Buffer(testBuffer.REQUEST_DELIMITERS)
-        flatBuffer._execRequestParsing(testData)
-
-        ## And then we will manually compare state between both buffers
-        ## NOTE: This assumes a single run of the flat buffer is correct
-        ## -- There already exist tests for the buffer
-        assert flatBuffer._requests == testBuffer._requests
-        assert flatBuffer._data == testBuffer._data
-        assert flatBuffer._MAX_BUFFER_SIZE == testBuffer._MAX_BUFFER_SIZE
-        assert flatBuffer.MAX_DELIMETER_LENGTH == testBuffer.MAX_DELIMETER_LENGTH
-        assert flatBuffer.REQUEST_DELIMETER_REGEX == testBuffer.REQUEST_DELIMETER_REGEX
 
 
 @pytest.fixture()
@@ -325,9 +54,11 @@ def createSingleThreadTCPProxyServer(createTCPProxyServer):
     class threadWrapper:
         def __init__(self, proxyServer) -> None:
             self.proxyServer = proxyServer
-            self.thread = threading.Thread(target=proxyServer.run, daemon=True)
+            self.thread = threading.Thread(target=proxyServer.run, daemon=False)
 
         def run(self):
+            host, port = self.proxyServer.serverSocket.getsockname()
+            print(f"Running Proxy Server @ {host}:{port}")
             return self.thread.start()
 
         def awaitConnectionCount(self, count: int) -> None:
@@ -616,3 +347,96 @@ class Test_ProxyServer_Termination:
         connectionsToClose = connectionsToCreate
         self._assertConnectionTeardown(echoServer, proxyServerThreadWrapper, proxyServerArgs,
                  connectionsToCreate, connectionsToClose, self._proxyShutdown)
+
+
+
+class Test_ProxyServer_connectionDataHandling:
+    ## TODO: Remove code
+    def _assertConnectionHandling(self, echoServer, proxyServerThreadWrapper, proxyServerArgs, connectionsToCreate, dataTransferArgs):
+        ## Setting up
+        proxyServer = proxyServerThreadWrapper.proxyServer
+
+        ## Setup a single client connection and wait until the connections have been accepted and handled
+        print("setting up user connections, and awaiting on proxy and server setup")
+        connections = [TPSTestResources.setupConnection(proxyServer) for _ in range(connectionsToCreate)]
+        echoServer.awaitConnectionCount(connectionsToCreate)
+        proxyServerThreadWrapper.awaitConnectionCount(connectionsToCreate)
+
+        ## We then send unique data over
+        # connectionData = self._sendRandomDataToProxy(connections)
+        connectionData = DataTransferSimulator.sendMultiConnMultiMessage(connections, **dataTransferArgs)
+
+        ## we then wait until each user socket has data (which means that data has propagated through proxy server)
+        DataTransferSimulator._awaitRoundaboutConnection(connections)
+
+        ## Assertions
+        try:
+            ## we should check the following
+            TPSTestResources.assertConstantAttributes(proxyServer, *proxyServerArgs)
+            TPSTestResources.assertSelectorState(proxyServer, connections)
+            TPSTestResources.assertProxyConnectionsState(proxyServer, connections)
+            TPSTestResources.assertUserConnectionData(connections, connectionData)
+            TPSTestResources.assertProxyTunnelsState(proxyServer, connections, connectionData)
+        except Exception as e:
+            print(f"Exception raised: {e}")
+            raise e
+        finally:
+            for sock in connections: sock.close()
+
+    ## NOTE: Basic connection handling
+    def test_singleConnection_dataHandling(self, createEchoProxyEnvironment) -> None:
+        echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
+        connectionsToCreate = 1
+        self._assertConnectionHandling(echoServer, proxyServerThreadWrapper, proxyServerArgs, connectionsToCreate)
+ 
+    def test_multipleConnection_dataHandling(self, createEchoProxyEnvironment) -> None:
+        ## BUG: This code works for all parameters, except for messageCount
+        ## --> For some reason the server hangs when a message count > 1 is sent
+        echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
+        connectionsToCreate = 1
+        testTimeRange = 10 ## this is the range in seconds, that the chunks can be scheduled for
+        dataSizeRange = (150, 200)  ## dataSizeRange must be >= 1
+        messageCountRange = (1,4) ## messageCount must be >= 0 (isEndDelimited=False), or >= 1 (isEndDelimited=True)
+        isEndDelimited = False
+        chunkCountRange = (1, 5) ## chunk count must be >= 1
+
+        def completeConnSender():
+            nonlocal proxyServerThreadWrapper, testTimeRange, dataSizeRange, isEndDelimited
+            dataSize = random.randint(*dataSizeRange)
+            messageCount = random.randint(*messageCountRange)
+            chunkCount = random.randint(*chunkCountRange)
+            delimiters = DataTransferSimulator._delimitersSelector(proxyServerThreadWrapper.proxyServer.streamInterceptor.REQUEST_DELIMITERS, messageCount)
+            datetimes = DataTransferSimulator._datetimesSelector(testTimeRange, chunkCount)
+            return (dataSize, messageCount, chunkCount, delimiters, datetimes, isEndDelimited)
+
+        dataTransferArgs = {"completeConnSender": completeConnSender}
+
+        self._assertConnectionHandling(echoServer, proxyServerThreadWrapper, proxyServerArgs, connectionsToCreate, dataTransferArgs)
+ 
+
+
+    ## NOTE: We want to test dropping chunks of data
+    def test_singleConnection_chunked_dataHandling(self, createEchoProxyEnvironment) -> None:
+        ...
+    
+    def test_multipleConnection_chunked_dataHandling(self, createEchoProxyEnvironment) -> None:
+        ...
+
+    ## NOTE: We want to test dropping several messages
+    def test_singleConnection_multipleMessages(self, createEchoProxyEnvironment) -> None:
+        ...
+
+    def test_multipleConnection_multipleMessages(self, createEchoProxyEnvironment) -> None:
+        ...
+
+    ## NOTE: We also want to test chunked multiple messages
+    def test_singleConnection_multipleMessages_chunked(self, createEchoProxyEnvironment) -> None:
+        ...
+
+    def test_multipleConnection_multipleMessages_chunked(self, createEchoProxyEnvironment) -> None: 
+        ...
+
+
+
+class Test_ProxyServer_connectionTermination:
+    ...
