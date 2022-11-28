@@ -737,25 +737,114 @@ class Test_DelimiterParsing:
 
 
 
+    def test_defaultWriteHook_PrevEndBuffer_DLSizeTwo_OneChunk_delimited(self, twoLenDelimiterTestSetup) -> None:
+        b, queue = twoLenDelimiterTestSetup
+
+        chunk1 = bytearray(b"completeReq\r\n")
+        b.write(chunk1)
+
+        assert b._data == chunk1
+        assert len(b._requests) == 0
+        assert b._prevEndBuffer == bytearray(b"")
+
+        assert len(queue) == 1
+        assert queue.pop() == chunk1
+
+    def test_defaultWriteHook_PrevEndBuffer_DLSizeTwo_OneChunk_undelimited(self, twoLenDelimiterTestSetup) -> None:
+        b, queue = twoLenDelimiterTestSetup
+
+        chunk1 = bytearray(b"incompleteReq")
+        b.write(chunk1)
+
+        assert b._data == chunk1
+        assert len(b._requests) == 1
+        assert b._requests[-1] == [chunk1, False]
+        assert b._prevEndBuffer == bytearray(b"q")
+        assert len(queue) == 0
+
+    def test_defaultWriteHook_PrevEndBuffer_DLSizeTwo_TwoChunk_FirstDelimited_SecondUndelimited(self, twoLenDelimiterTestSetup) -> None:
+        b, queue = twoLenDelimiterTestSetup
+
+        chunk1 = bytearray(b"completeReq\r\n")
+        chunk2 = bytearray(b"incompleteReq")
+        b.write(chunk1)
+        assert b._prevEndBuffer == bytearray(b"")
+        b.write(chunk2)
+        assert b._prevEndBuffer == bytearray(b"q")
+
+        assert b._data == chunk1 + chunk2
+        assert len(b._requests) == 1
+        assert b._requests[-1] == [chunk2, False]
+
+        assert len(queue) == 1
+        assert queue.pop() == chunk1
+        
+    def test_defaultWriteHook_PrevEndBuffer_DLSizeTwo_TwoChunk_FirstDelimited_SecondDelimited(self, twoLenDelimiterTestSetup) -> None:
+        b, queue = twoLenDelimiterTestSetup
+
+        chunk1 = bytearray(b"completeReq\r\n")
+        chunk2 = bytearray(b"completeReq\r\n")
+        b.write(chunk1)
+        assert b._prevEndBuffer == bytearray(b"")
+        b.write(chunk2)
+        assert b._prevEndBuffer == bytearray(b"")
+
+        assert b._data == chunk1 + chunk2
+        assert len(b._requests) == 0
+
+        assert len(queue) == 2
+        assert queue.pop() == chunk1
+        assert queue.pop() == chunk2
+
+    def test_defaultWriteHook_PrevEndBuffer_DLSizeTwo_TwoChunk_FirstUndelimited_SecondDelimited(self, twoLenDelimiterTestSetup) -> None:
+        b, queue = twoLenDelimiterTestSetup
+
+        chunk1 = bytearray(b"incompleteR")
+        chunk2 = bytearray(b"eq\r\n")
+        b.write(chunk1)
+        assert b._prevEndBuffer == bytearray(b"R")
+        b.write(chunk2)
+        assert b._prevEndBuffer == bytearray(b"")
+
+        assert b._data == chunk1 + chunk2
+        assert len(b._requests) == 0
+        
+        assert len(queue) == 1
+        assert queue.pop() == chunk1 + chunk2
+
+    def test_defaultWriteHook_PrevEndBuffer_DLSizeTwo_TwoChunk_FirstUndelimited_SecondUndelimited(self, twoLenDelimiterTestSetup) -> None:
+        b, queue = twoLenDelimiterTestSetup
+
+        chunk1 = bytearray(b"incomplete")
+        chunk2 = bytearray(b"Req")
+        b.write(chunk1)
+        assert b._prevEndBuffer == bytearray(b"e")
+        b.write(chunk2)
+        assert b._prevEndBuffer == bytearray(b"q")
+
+        assert b._data == chunk1 + chunk2
+        assert len(b._requests) == 1
+        assert b._requests[-1] == [chunk1+chunk2, False]
+        
+        assert len(queue) == 0
+
+    def test_defaultWriteHook_PrevEndBuffer_DLSizeTwo_SpreadDelimiter(self, twoLenDelimiterTestSetup) -> None:
+        b, queue = twoLenDelimiterTestSetup
+
+        chunk1 = bytearray(b"incompleteReq\r")
+        chunk2 = bytearray(b"\n")
+        b.write(chunk1)
+        assert b._prevEndBuffer == bytearray(b"\r")
+        b.write(chunk2)
+        assert b._prevEndBuffer == bytearray(b"")
+
+        assert b._data == chunk1 + chunk2
+        assert len(b._requests) == 1
+        assert b._requests[-1] == [chunk1+chunk2, False]
+        
+        assert len(queue) == 0
 
 
-    # def test_defaultWriteHook_PrevEndBuffer_DLSizeTwo_OneChunk_delimited(self) -> None:
-    #     ...
-
-    # def test_defaultWriteHook_PrevEndBuffer_DLSizeTwo_OneChunk_undelimited(self) -> None:
-    #     ...
-
-    # def test_defaultWriteHook_PrevEndBuffer_DLSizeTwo_TwoChunk_FirstDelimited_SecondUndelimited(self) -> None:
-    #     ...
-
-    # def test_defaultWriteHook_PrevEndBuffer_DLSizeTwo_TwoChunk_FirstDelimited_SecondDelimited(self) -> None:
-    #     ...
-
-    # def test_defaultWriteHook_PrevEndBuffer_DLSizeTwo_TwoChunk_FirstUndelimited_SecondDelimited(self) -> None:
-    #     ...
-
-    # def test_defaultWriteHook_PrevEndBuffer_DLSizeTwo_TwoChunk_PirstUndelimited_SecondUndelimited(self) -> None:
-    #     ...
 
 
 
