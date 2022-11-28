@@ -23,7 +23,7 @@ from _testResources import PTTestResources
 
 sys.path.insert(0, os.path.join("..", "src"))
 sys.path.insert(0, "src")
-from tcp_proxyserver import ProxyConnections, TCPProxyServer
+from tcp_proxyserver import ProxyConnections, TCPProxyServer, ProxyTunnel
 from _exceptions import *
 from _proxyDS import StreamInterceptor, Buffer
 
@@ -180,7 +180,7 @@ class Test_ProxyServer_connectionSetup:
             TPSTestResources.assertSelectorState(proxyServer, connections)
             TPSTestResources.assertProxyConnectionsState(proxyServer, connections)
         except Exception as e:
-            print(f"Exception raised: {e}")
+            print(f"Assert ConnectionSetup - Exception raised: {e}")
             raise e
         finally:
             for sock in connections:
@@ -279,7 +279,7 @@ class Test_ProxyServer_Termination:
             TPSTestResources.assertSelectorState(proxyServer, connections)
             TPSTestResources.assertProxyConnectionsState(proxyServer, connections)
         except Exception as e:
-            print(f"Exception raised: {e}")
+            print(f"Assert Connection Teardown - Exception raised: {e}")
             raise e
         finally:
             for sock in connections: sock.close()
@@ -350,20 +350,19 @@ class Test_ProxyServer_Termination:
 
 
 
+
+
 class Test_ProxyServer_connectionDataHandling:
-    ## TODO: Remove code
     def _assertConnectionHandling(self, echoServer, proxyServerThreadWrapper, proxyServerArgs, connectionsToCreate, dataTransferArgs):
         ## Setting up
         proxyServer = proxyServerThreadWrapper.proxyServer
 
         ## Setup a single client connection and wait until the connections have been accepted and handled
-        print("setting up user connections, and awaiting on proxy and server setup")
         connections = [TPSTestResources.setupConnection(proxyServer) for _ in range(connectionsToCreate)]
         echoServer.awaitConnectionCount(connectionsToCreate)
         proxyServerThreadWrapper.awaitConnectionCount(connectionsToCreate)
 
         ## We then send unique data over
-        # connectionData = self._sendRandomDataToProxy(connections)
         connectionData = DataTransferSimulator.sendMultiConnMultiMessage(connections, **dataTransferArgs)
 
         ## we then wait until each user socket has data (which means that data has propagated through proxy server)
@@ -378,65 +377,238 @@ class Test_ProxyServer_connectionDataHandling:
             TPSTestResources.assertUserConnectionData(connections, connectionData)
             TPSTestResources.assertProxyTunnelsState(proxyServer, connections, connectionData)
         except Exception as e:
-            print(f"Exception raised: {e}")
+            print(f"Assert ConnectionHandling - Exception raised: {e}")
             raise e
         finally:
             for sock in connections: sock.close()
 
-    ## NOTE: Basic connection handling
-    def test_singleConnection_dataHandling(self, createEchoProxyEnvironment) -> None:
+    ## Options are:
+    ## - chunked (single, two, many)
+    ## - messages (zero, single, two, many) + (undelimited/delimited)
+    ## - connections (single, many)
+    ## - connection throughput size ( <bufferSize / >bufferSize)
+
+    ## Single Connection
+    ## Unfilled Buffer
+    def test_singleConnection_singleChunk_unfilledBuffer_oneIncompleteMessage(self, createEchoProxyEnvironment) -> None:
         echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
+        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptor.REQUEST_DELIMITERS
+
+        ## PARAMETERS
         connectionsToCreate = 1
-        self._assertConnectionHandling(echoServer, proxyServerThreadWrapper, proxyServerArgs, connectionsToCreate)
- 
-    def test_multipleConnection_dataHandling(self, createEchoProxyEnvironment) -> None:
-        ## BUG: This code works for all parameters, except for messageCount
-        ## --> For some reason the server hangs when a message count > 1 is sent
-        echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
-        connectionsToCreate = 1
-        testTimeRange = 10 ## this is the range in seconds, that the chunks can be scheduled for
-        dataSizeRange = (150, 200)  ## dataSizeRange must be >= 1
-        messageCountRange = (1,4) ## messageCount must be >= 0 (isEndDelimited=False), or >= 1 (isEndDelimited=True)
+        testTimeRange = 10 ## this is the range in seconds, that the chunks can be scheduled for (only ordering of TS is respected)
+        dataSizeRange = (150, 200) ## dataSizeRange must be >= 1
+        messageCountRange = (0,0) ## messageCount must be >= 0 (isEndDelimited=False), or >= 1 (isEndDelimited=True)
         isEndDelimited = False
-        chunkCountRange = (1, 5) ## chunk count must be >= 1
+        chunkCountRange = (1, 1) ## chunk count must be >= 1
 
-        def completeConnSender():
-            nonlocal proxyServerThreadWrapper, testTimeRange, dataSizeRange, isEndDelimited
-            dataSize = random.randint(*dataSizeRange)
-            messageCount = random.randint(*messageCountRange)
-            chunkCount = random.randint(*chunkCountRange)
-            delimiters = DataTransferSimulator._delimitersSelector(proxyServerThreadWrapper.proxyServer.streamInterceptor.REQUEST_DELIMITERS, messageCount)
-            datetimes = DataTransferSimulator._datetimesSelector(testTimeRange, chunkCount)
-            return (dataSize, messageCount, chunkCount, delimiters, datetimes, isEndDelimited)
-
+        completeConnSender = DataTransferSimulator.createRandomConnSender(dataSizeRange, messageCountRange, chunkCountRange, delimiterList, isEndDelimited, testTimeRange)
         dataTransferArgs = {"completeConnSender": completeConnSender}
 
         self._assertConnectionHandling(echoServer, proxyServerThreadWrapper, proxyServerArgs, connectionsToCreate, dataTransferArgs)
- 
 
 
-    ## NOTE: We want to test dropping chunks of data
-    def test_singleConnection_chunked_dataHandling(self, createEchoProxyEnvironment) -> None:
-        ...
-    
-    def test_multipleConnection_chunked_dataHandling(self, createEchoProxyEnvironment) -> None:
-        ...
+    def test_singleConnection_singleChunk_unfilledBuffer_oneCompleteMessages(self, createEchoProxyEnvironment) -> None:
+        echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
+        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptor.REQUEST_DELIMITERS
 
-    ## NOTE: We want to test dropping several messages
-    def test_singleConnection_multipleMessages(self, createEchoProxyEnvironment) -> None:
-        ...
+        ## PARAMETERS
+        connectionsToCreate = 1
+        testTimeRange = 10 ## this is the range in seconds, that the chunks can be scheduled for (only ordering of TS is respected)
+        dataSizeRange = (150, 200) ## dataSizeRange must be >= 1
+        messageCountRange = (1,1) ## messageCount must be >= 0 (isEndDelimited=False), or >= 1 (isEndDelimited=True)
+        isEndDelimited = True
+        chunkCountRange = (1, 1) ## chunk count must be >= 1
 
-    def test_multipleConnection_multipleMessages(self, createEchoProxyEnvironment) -> None:
-        ...
+        completeConnSender = DataTransferSimulator.createRandomConnSender(dataSizeRange, messageCountRange, chunkCountRange, delimiterList, isEndDelimited, testTimeRange)
+        dataTransferArgs = {"completeConnSender": completeConnSender}
 
-    ## NOTE: We also want to test chunked multiple messages
-    def test_singleConnection_multipleMessages_chunked(self, createEchoProxyEnvironment) -> None:
-        ...
-
-    def test_multipleConnection_multipleMessages_chunked(self, createEchoProxyEnvironment) -> None: 
-        ...
+        self._assertConnectionHandling(echoServer, proxyServerThreadWrapper, proxyServerArgs, connectionsToCreate, dataTransferArgs)
 
 
+    def test_singleConnection_singleChunk_unfilledBuffer_oneCompleteMessages_IncompleteMessage(self, createEchoProxyEnvironment) -> None:
+        echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
+        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptor.REQUEST_DELIMITERS
 
-class Test_ProxyServer_connectionTermination:
-    ...
+        ## PARAMETERS
+        connectionsToCreate = 1
+        testTimeRange = 10 ## this is the range in seconds, that the chunks can be scheduled for (only ordering of TS is respected)
+        dataSizeRange = (150, 200) ## dataSizeRange must be >= 1
+        messageCountRange = (2,2) ## messageCount must be >= 0 (isEndDelimited=False), or >= 1 (isEndDelimited=True)
+        isEndDelimited = False
+        chunkCountRange = (1, 1) ## chunk count must be >= 1
+
+        completeConnSender = DataTransferSimulator.createRandomConnSender(dataSizeRange, messageCountRange, chunkCountRange, delimiterList, isEndDelimited, testTimeRange)
+        dataTransferArgs = {"completeConnSender": completeConnSender}
+
+        self._assertConnectionHandling(echoServer, proxyServerThreadWrapper, proxyServerArgs, connectionsToCreate, dataTransferArgs)
+
+    def test_singleConnection_singleChunk_unfilledBuffer_ManyCompleteMessages(self, createEchoProxyEnvironment) -> None:
+        echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
+        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptor.REQUEST_DELIMITERS
+
+        ## PARAMETERS
+        connectionsToCreate = 1
+        testTimeRange = 10 ## this is the range in seconds, that the chunks can be scheduled for (only ordering of TS is respected)
+        dataSizeRange = (150, 200) ## dataSizeRange must be >= 1
+        messageCountRange = (10,10) ## messageCount must be >= 0 (isEndDelimited=False), or >= 1 (isEndDelimited=True)
+        isEndDelimited = True
+        chunkCountRange = (1, 1) ## chunk count must be >= 1
+
+        completeConnSender = DataTransferSimulator.createRandomConnSender(dataSizeRange, messageCountRange, chunkCountRange, delimiterList, isEndDelimited, testTimeRange)
+        dataTransferArgs = {"completeConnSender": completeConnSender}
+
+        self._assertConnectionHandling(echoServer, proxyServerThreadWrapper, proxyServerArgs, connectionsToCreate, dataTransferArgs)
+
+    def test_singleConnection_singleChunk_unfilledBuffer_ManyCompleteMessages_IncompleteMessage(self, createEchoProxyEnvironment) -> None:
+        echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
+        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptor.REQUEST_DELIMITERS
+
+        ## PARAMETERS
+        connectionsToCreate = 1
+        testTimeRange = 10 ## this is the range in seconds, that the chunks can be scheduled for (only ordering of TS is respected)
+        dataSizeRange = (150, 200) ## dataSizeRange must be >= 1
+        messageCountRange = (10,10) ## messageCount must be >= 0 (isEndDelimited=False), or >= 1 (isEndDelimited=True)
+        isEndDelimited = False
+        chunkCountRange = (1, 1) ## chunk count must be >= 1
+
+        completeConnSender = DataTransferSimulator.createRandomConnSender(dataSizeRange, messageCountRange, chunkCountRange, delimiterList, isEndDelimited, testTimeRange)
+        dataTransferArgs = {"completeConnSender": completeConnSender}
+
+        self._assertConnectionHandling(echoServer, proxyServerThreadWrapper, proxyServerArgs, connectionsToCreate, dataTransferArgs)
+
+    ## Overfilled Buffer
+    def test_singleConnection_singleChunk_overfilledBuffer_oneIncompleteMessage(self, createEchoProxyEnvironment) -> None:
+        ## NOTE: A max buffer is not implemented for Buffer class
+        raise NotImplementedError()
+
+    def test_singleConnection_singleChunk_overfilledBuffer_oneCompleteMessages(self, createEchoProxyEnvironment) -> None:
+        ## NOTE: A max buffer is not implemented for Buffer class
+        raise NotImplementedError()
+
+    def test_singleConnection_singleChunk_overfilledBuffer_oneCompleteMessages_IncompleteMessage(self, createEchoProxyEnvironment) -> None:
+        ## NOTE: A max buffer is not implemented for Buffer class
+        raise NotImplementedError()
+
+    def test_singleConnection_singleChunk_overfilledBuffer_ManyCompleteMessages(self, createEchoProxyEnvironment) -> None:
+        ## NOTE: A max buffer is not implemented for Buffer class
+        raise NotImplementedError()
+
+    def test_singleConnection_singleChunk_overfilledBuffer_ManyCompleteMessages_IncompleteMessage(self, createEchoProxyEnvironment) -> None:
+        ## NOTE: A max buffer is not implemented for Buffer class
+        raise NotImplementedError()
+
+#     ## Many Connection
+#     ## Unfilled Buffer
+    def test_multiConnection_singleChunk_unfilledBuffer_oneIncompleteMessage(self, createEchoProxyEnvironment) -> None:
+        echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
+        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptor.REQUEST_DELIMITERS
+
+        ## PARAMETERS
+        connectionsToCreate = 100
+        testTimeRange = 10 ## this is the range in seconds, that the chunks can be scheduled for (only ordering of TS is respected)
+        dataSizeRange = (150, 200) ## dataSizeRange must be >= 1
+        messageCountRange = (0,0) ## messageCount must be >= 0 (isEndDelimited=False), or >= 1 (isEndDelimited=True)
+        isEndDelimited = False
+        chunkCountRange = (1, 1) ## chunk count must be >= 1
+
+        completeConnSender = DataTransferSimulator.createRandomConnSender(dataSizeRange, messageCountRange, chunkCountRange, delimiterList, isEndDelimited, testTimeRange)
+        dataTransferArgs = {"completeConnSender": completeConnSender}
+
+        self._assertConnectionHandling(echoServer, proxyServerThreadWrapper, proxyServerArgs, connectionsToCreate, dataTransferArgs)
+
+
+    def test_multiConnection_singleChunk_unfilledBuffer_oneCompleteMessages(self, createEchoProxyEnvironment) -> None:
+        echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
+        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptor.REQUEST_DELIMITERS
+
+        ## PARAMETERS
+        connectionsToCreate = 100
+        testTimeRange = 10 ## this is the range in seconds, that the chunks can be scheduled for (only ordering of TS is respected)
+        dataSizeRange = (150, 200) ## dataSizeRange must be >= 1
+        messageCountRange = (1,1) ## messageCount must be >= 0 (isEndDelimited=False), or >= 1 (isEndDelimited=True)
+        isEndDelimited = True
+        chunkCountRange = (1, 1) ## chunk count must be >= 1
+
+        completeConnSender = DataTransferSimulator.createRandomConnSender(dataSizeRange, messageCountRange, chunkCountRange, delimiterList, isEndDelimited, testTimeRange)
+        dataTransferArgs = {"completeConnSender": completeConnSender}
+
+        self._assertConnectionHandling(echoServer, proxyServerThreadWrapper, proxyServerArgs, connectionsToCreate, dataTransferArgs)
+
+
+    def test_multiConnection_singleChunk_unfilledBuffer_oneCompleteMessages_IncompleteMessage(self, createEchoProxyEnvironment) -> None:
+        echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
+        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptor.REQUEST_DELIMITERS
+
+        ## PARAMETERS
+        connectionsToCreate = 100
+        testTimeRange = 10 ## this is the range in seconds, that the chunks can be scheduled for (only ordering of TS is respected)
+        dataSizeRange = (150, 200) ## dataSizeRange must be >= 1
+        messageCountRange = (2,2) ## messageCount must be >= 0 (isEndDelimited=False), or >= 1 (isEndDelimited=True)
+        isEndDelimited = False
+        chunkCountRange = (1, 1) ## chunk count must be >= 1
+
+        completeConnSender = DataTransferSimulator.createRandomConnSender(dataSizeRange, messageCountRange, chunkCountRange, delimiterList, isEndDelimited, testTimeRange)
+        dataTransferArgs = {"completeConnSender": completeConnSender}
+
+        self._assertConnectionHandling(echoServer, proxyServerThreadWrapper, proxyServerArgs, connectionsToCreate, dataTransferArgs)
+
+    def test_multiConnection_singleChunk_unfilledBuffer_ManyCompleteMessages(self, createEchoProxyEnvironment) -> None:
+        echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
+        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptor.REQUEST_DELIMITERS
+
+        ## PARAMETERS
+        connectionsToCreate = 100
+        testTimeRange = 10 ## this is the range in seconds, that the chunks can be scheduled for (only ordering of TS is respected)
+        dataSizeRange = (150, 200) ## dataSizeRange must be >= 1
+        messageCountRange = (10,10) ## messageCount must be >= 0 (isEndDelimited=False), or >= 1 (isEndDelimited=True)
+        isEndDelimited = True
+        chunkCountRange = (1, 1) ## chunk count must be >= 1
+
+        completeConnSender = DataTransferSimulator.createRandomConnSender(dataSizeRange, messageCountRange, chunkCountRange, delimiterList, isEndDelimited, testTimeRange)
+        dataTransferArgs = {"completeConnSender": completeConnSender}
+
+        self._assertConnectionHandling(echoServer, proxyServerThreadWrapper, proxyServerArgs, connectionsToCreate, dataTransferArgs)
+
+    def test_multiConnection_singleChunk_unfilledBuffer_ManyCompleteMessages_IncompleteMessage(self, createEchoProxyEnvironment) -> None:
+        echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
+        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptor.REQUEST_DELIMITERS
+
+        ## PARAMETERS
+        connectionsToCreate = 100
+        testTimeRange = 10 ## this is the range in seconds, that the chunks can be scheduled for (only ordering of TS is respected)
+        dataSizeRange = (150, 200) ## dataSizeRange must be >= 1
+        messageCountRange = (10,10) ## messageCount must be >= 0 (isEndDelimited=False), or >= 1 (isEndDelimited=True)
+        isEndDelimited = False
+        chunkCountRange = (1, 1) ## chunk count must be >= 1
+
+        completeConnSender = DataTransferSimulator.createRandomConnSender(dataSizeRange, messageCountRange, chunkCountRange, delimiterList, isEndDelimited, testTimeRange)
+        dataTransferArgs = {"completeConnSender": completeConnSender}
+
+        self._assertConnectionHandling(echoServer, proxyServerThreadWrapper, proxyServerArgs, connectionsToCreate, dataTransferArgs)
+
+    ## Overfilled Buffer
+    def test_multiConnection_singleChunk_overfilledBuffer_oneIncompleteMessage(self, createEchoProxyEnvironment) -> None:
+        ## NOTE: A max buffer is not implemented for Buffer class
+        raise NotImplementedError()
+
+    def test_multiConnection_singleChunk_overfilledBuffer_oneCompleteMessages(self, createEchoProxyEnvironment) -> None:
+        ## NOTE: A max buffer is not implemented for Buffer class
+        raise NotImplementedError()
+
+    def test_multiConnection_singleChunk_overfilledBuffer_oneCompleteMessages_IncompleteMessage(self, createEchoProxyEnvironment) -> None:
+        ## NOTE: A max buffer is not implemented for Buffer class
+        raise NotImplementedError()
+
+    def test_multiConnection_singleChunk_overfilledBuffer_ManyCompleteMessages(self, createEchoProxyEnvironment) -> None:
+        ## NOTE: A max buffer is not implemented for Buffer class
+        raise NotImplementedError()
+
+    def test_multiConnection_singleChunk_overfilledBuffer_ManyCompleteMessages_IncompleteMessage(self, createEchoProxyEnvironment) -> None:
+        ## NOTE: A max buffer is not implemented for Buffer class
+        raise NotImplementedError()
+
+
+#
+# class Test_ProxyServer_connectionTermination:
+#     ...
