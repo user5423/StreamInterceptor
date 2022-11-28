@@ -9,9 +9,37 @@ sys.path.insert(0, "src")
 from _proxyDS import Buffer
 
 
-class Test_Buffer_RequestParsing:
 
-    def _setupRequestHookMock(self, buffer: Buffer) -> collections.deque:
+
+@pytest.fixture()
+def oneLenDelimiterTestSetup():
+    delimiters = [b"\r"]
+    delimiter = delimiters[0]
+    b = Buffer(delimiters)
+    queue = BufferReqParsingHelpers._setupRequestHookMock(b)
+    yield b, queue
+
+@pytest.fixture()
+def twoLenDelimiterTestSetup():
+    delimiters = [b"\r\n"]
+    delimiter = delimiters[0]
+    b = Buffer(delimiters)
+    queue = BufferReqParsingHelpers._setupRequestHookMock(b)
+    yield b, queue
+
+@pytest.fixture()
+def manyLenDelimiterTestSetup():
+    delimiters = [b"\r\n\r\n"]
+    delimiter = delimiters[0]
+    b = Buffer(delimiters)
+    queue = BufferReqParsingHelpers._setupRequestHookMock(b)
+    yield b, queue
+
+
+
+class BufferReqParsingHelpers:
+    @classmethod
+    def _setupRequestHookMock(cls, buffer: Buffer) -> collections.deque:
         ## NOTE: The return queue returns the requests that were passed to the requestHook (in LIFO order)
         queue = collections.deque([])
         def requestHook(self, request):
@@ -20,6 +48,10 @@ class Test_Buffer_RequestParsing:
 
         buffer._requestHook = functools.partial(requestHook, buffer)
         return queue
+
+class Test_Buffer_RequestParsing:
+
+
 
     ## Scenarios
     ## starts
@@ -46,11 +78,8 @@ class Test_Buffer_RequestParsing:
     
 
     ## Single Chunks (> 1 requests)
-    def test_defaultWriteHook_SingleChunk_OnePartialRequest(self):
-        delimiters = [b"\r\n"]
-        delimiter = delimiters[0]
-        b = Buffer(delimiters)
-        queue = self._setupRequestHookMock(b)
+    def test_defaultWriteHook_SingleChunk_OnePartialRequest(self, twoLenDelimiterTestSetup):
+        b, queue = twoLenDelimiterTestSetup
 
         req1 = bytearray(b"incompleteR")
         chunk = req1
@@ -65,11 +94,8 @@ class Test_Buffer_RequestParsing:
         assert b._prevEndBuffer == bytearray(b"R")
 
 
-    def test_defaultWriteHook_SingleChunk_OneCompleteRequest(self):
-        delimiters = [b"\r\n"]
-        delimiter = delimiters[0]
-        b = Buffer(delimiters)
-        queue = self._setupRequestHookMock(b)
+    def test_defaultWriteHook_SingleChunk_OneCompleteRequest(self, twoLenDelimiterTestSetup):
+        b, queue = twoLenDelimiterTestSetup
 
         req1 = bytearray(b"completeReq\r\n")
         chunk = req1
@@ -84,11 +110,8 @@ class Test_Buffer_RequestParsing:
         assert b._prevEndBuffer == bytearray(b"")
 
 
-    def test_defaultWriteHook_SingleChunk_OneCompleteRequest_OnePartialRequest(self):
-        delimiters = [b"\r\n"]
-        delimiter = delimiters[0]
-        b = Buffer(delimiters)
-        queue = self._setupRequestHookMock(b)
+    def test_defaultWriteHook_SingleChunk_OneCompleteRequest_OnePartialRequest(self, twoLenDelimiterTestSetup):
+        b, queue = twoLenDelimiterTestSetup
 
         req1 = bytearray(b"completeReq1\r\n")
         req2 = bytearray(b"incompleteR")
@@ -105,11 +128,8 @@ class Test_Buffer_RequestParsing:
 
         assert b._prevEndBuffer == bytearray(b"R")
 
-    def test_defaultWriteHook_SingleChunk_TwoCompleteRequest(self):
-        delimiters = [b"\r\n"]
-        delimiter = delimiters[0]
-        b = Buffer(delimiters)
-        queue = self._setupRequestHookMock(b)
+    def test_defaultWriteHook_SingleChunk_TwoCompleteRequest(self, twoLenDelimiterTestSetup):
+        b, queue = twoLenDelimiterTestSetup
 
         req1 = bytearray(b"completeReq1\r\n")
         req2 = bytearray(b"completeReq2\r\n")
@@ -126,11 +146,8 @@ class Test_Buffer_RequestParsing:
 
         assert b._prevEndBuffer == bytearray(b"")
 
-    def test_defaultWriteHook_SingleChunk_TwoCompleteRequest_OnePartialRequest(self):
-        delimiters = [b"\r\n"]
-        delimiter = delimiters[0]
-        b = Buffer(delimiters)
-        queue = self._setupRequestHookMock(b)
+    def test_defaultWriteHook_SingleChunk_TwoCompleteRequest_OnePartialRequest(self, twoLenDelimiterTestSetup):
+        b, queue = twoLenDelimiterTestSetup
 
         req1 = bytearray(b"completeReq1\r\n")
         req2 = bytearray(b"completeReq2\r\n")
@@ -149,11 +166,8 @@ class Test_Buffer_RequestParsing:
 
         assert b._prevEndBuffer == bytearray(b"R")
 
-    def test_defaultWriteHook_SingleChunk_ManyCompleteRequest(self):
-        delimiters = [b"\r\n"]
-        delimiter = delimiters[0]
-        b = Buffer(delimiters)
-        queue = self._setupRequestHookMock(b)
+    def test_defaultWriteHook_SingleChunk_ManyCompleteRequest(self, twoLenDelimiterTestSetup):
+        b, queue = twoLenDelimiterTestSetup
 
         req1 = bytearray(b"completeReq1\r\n")
         req2 = bytearray(b"completeReq2\r\n")
@@ -176,11 +190,8 @@ class Test_Buffer_RequestParsing:
     
         assert b._prevEndBuffer == bytearray(b"")
 
-    def test_defaultWriteHook_SingleChunk_ManyCompleteRequest_OnePartialRequest(self):
-        delimiters = [b"\r\n"]
-        delimiter = delimiters[0]
-        b = Buffer(delimiters)
-        queue = self._setupRequestHookMock(b)
+    def test_defaultWriteHook_SingleChunk_ManyCompleteRequest_OnePartialRequest(self, twoLenDelimiterTestSetup):
+        b, queue = twoLenDelimiterTestSetup
 
         req1 = bytearray(b"completeReq1\r\n")
         req2 = bytearray(b"completeReq2\r\n")
@@ -205,11 +216,8 @@ class Test_Buffer_RequestParsing:
 
     
     ## Tests for request spreading over chunks (spread from start chunk 1 to mid chunk 2)
-    def test_defaultWriteHook_TwoChunk_OneSpreadCompleteRequest_OneCompleteRequest(self):
-        delimiters = [b"\r\n"]
-        delimiter = delimiters[0]
-        b = Buffer(delimiters)
-        queue = self._setupRequestHookMock(b)
+    def test_defaultWriteHook_TwoChunk_OneSpreadCompleteRequest_OneCompleteRequest(self, twoLenDelimiterTestSetup):
+        b, queue = twoLenDelimiterTestSetup
 
         chunk1 = bytearray(b"complete")
         chunk2 = bytearray(b"Req1\r\ncompleteReq2\r\n")
@@ -227,11 +235,8 @@ class Test_Buffer_RequestParsing:
         assert queue.pop() == bytearray(b"completeReq2\r\n")
 
 
-    def test_defaultWriteHook_TwoChunk_OneSpreadCompleteRequest_OneCompleteRequest_OnePartialRequest(self):
-        delimiters = [b"\r\n"]
-        delimiter = delimiters[0]
-        b = Buffer(delimiters)
-        queue = self._setupRequestHookMock(b)
+    def test_defaultWriteHook_TwoChunk_OneSpreadCompleteRequest_OneCompleteRequest_OnePartialRequest(self, twoLenDelimiterTestSetup):
+        b, queue = twoLenDelimiterTestSetup
 
         chunk1 = bytearray(b"complete")
         chunk2 = bytearray(b"Req1\r\ncompleteReq2\r\nincompleteR")
@@ -249,11 +254,8 @@ class Test_Buffer_RequestParsing:
         assert queue.pop() == bytearray(b"completeReq2\r\n")
 
 
-    def test_defaultWriteHook_TwoChunk_OneSpreadCompleteRequest_TwoCompleteRequest(self):
-        delimiters = [b"\r\n"]
-        delimiter = delimiters[0]
-        b = Buffer(delimiters)
-        queue = self._setupRequestHookMock(b)
+    def test_defaultWriteHook_TwoChunk_OneSpreadCompleteRequest_TwoCompleteRequest(self, twoLenDelimiterTestSetup):
+        b, queue = twoLenDelimiterTestSetup
 
         chunk1 = bytearray(b"complete")
         chunk2 = bytearray(b"Req1\r\ncompleteReq2\r\ncompleteReq3\r\n")
@@ -272,11 +274,8 @@ class Test_Buffer_RequestParsing:
         assert queue.pop() == bytearray(b"completeReq3\r\n")
 
 
-    def test_defaultWriteHook_TwoChunk_OneSpreadCompleteRequest_TwoCompleteRequest_OnePartialRequest(self):
-        delimiters = [b"\r\n"]
-        delimiter = delimiters[0]
-        b = Buffer(delimiters)
-        queue = self._setupRequestHookMock(b)
+    def test_defaultWriteHook_TwoChunk_OneSpreadCompleteRequest_TwoCompleteRequest_OnePartialRequest(self, twoLenDelimiterTestSetup):
+        b, queue = twoLenDelimiterTestSetup
 
         chunk1 = bytearray(b"complete")
         chunk2 = bytearray(b"Req1\r\ncompleteReq2\r\ncompleteReq3\r\nincompleteR")
@@ -297,11 +296,8 @@ class Test_Buffer_RequestParsing:
 
 
 
-    def test_defaultWriteHook_TwoChunk_OneSpreadCompleteRequest_ManyCompleteRequest(self):
-        delimiters = [b"\r\n"]
-        delimiter = delimiters[0]
-        b = Buffer(delimiters)
-        queue = self._setupRequestHookMock(b)
+    def test_defaultWriteHook_TwoChunk_OneSpreadCompleteRequest_ManyCompleteRequest(self, twoLenDelimiterTestSetup):
+        b, queue = twoLenDelimiterTestSetup
 
         chunk1 = bytearray(b"complete")
         chunk2 = bytearray(b"Req1\r\ncompleteReq2\r\ncompleteReq3\r\ncompleteReq4\r\ncompleteReq5\r\n")
@@ -322,11 +318,8 @@ class Test_Buffer_RequestParsing:
         assert queue.pop() == bytearray(b"completeReq5\r\n")
 
 
-    def test_defaultWriteHook_TwoChunk_OneSpreadCompleteRequest_ManyCompleteRequest(self):
-        delimiters = [b"\r\n"]
-        delimiter = delimiters[0]
-        b = Buffer(delimiters)
-        queue = self._setupRequestHookMock(b)
+    def test_defaultWriteHook_TwoChunk_OneSpreadCompleteRequest_ManyCompleteRequest_OnePartialRequest(self, twoLenDelimiterTestSetup):
+        b, queue = twoLenDelimiterTestSetup
 
         chunk1 = bytearray(b"complete")
         chunk2 = bytearray(b"Req1\r\ncompleteReq2\r\ncompleteReq3\r\ncompleteReq4\r\ncompleteReq5\r\nincompleteR")
@@ -349,11 +342,8 @@ class Test_Buffer_RequestParsing:
 
 
     ## Tests for request spreading over chunks (spread from start from mid chunk 1 to mid chunk 2)
-    def test_defaultWriteHook_TwoChunk_OneCompleteRequest_OneSpreadCompleteRequest(self):
-        delimiters = [b"\r\n"]
-        delimiter = delimiters[0]
-        b = Buffer(delimiters)
-        queue = self._setupRequestHookMock(b)
+    def test_defaultWriteHook_TwoChunk_OneCompleteRequest_OneSpreadCompleteRequest(self, twoLenDelimiterTestSetup):
+        b, queue = twoLenDelimiterTestSetup
 
         chunk1 = bytearray(b"completeReq1\r\ncomp")
         chunk2 = bytearray(b"leteReq2\r\n")
@@ -371,11 +361,8 @@ class Test_Buffer_RequestParsing:
         assert queue.pop() == bytearray(b"completeReq2\r\n")
 
 
-    def test_defaultWriteHook_TwoChunk_OneCompleteRequest_OneSpreadCompleteRequest_OneParitalRequest(self):
-        delimiters = [b"\r\n"]
-        delimiter = delimiters[0]
-        b = Buffer(delimiters)
-        queue = self._setupRequestHookMock(b)
+    def test_defaultWriteHook_TwoChunk_OneCompleteRequest_OneSpreadCompleteRequest_OneParitalRequest(self, twoLenDelimiterTestSetup):
+        b, queue = twoLenDelimiterTestSetup
 
         chunk1 = bytearray(b"completeReq1\r\ncomp")
         chunk2 = bytearray(b"leteReq2\r\nincompleteR")
@@ -394,11 +381,8 @@ class Test_Buffer_RequestParsing:
         assert queue.pop() == bytearray(b"completeReq2\r\n")
 
 
-    def test_defaultWriteHook_TwoChunk_OneCompleteRequest_OneSpreadCompleteRequest_OneCompleteRequest(self):
-        delimiters = [b"\r\n"]
-        delimiter = delimiters[0]
-        b = Buffer(delimiters)
-        queue = self._setupRequestHookMock(b)
+    def test_defaultWriteHook_TwoChunk_OneCompleteRequest_OneSpreadCompleteRequest_OneCompleteRequest(self, twoLenDelimiterTestSetup):
+        b, queue = twoLenDelimiterTestSetup
 
         chunk1 = bytearray(b"completeReq1\r\ncomp")
         chunk2 = bytearray(b"leteReq2\r\ncompleteReq3\r\n")
@@ -417,11 +401,8 @@ class Test_Buffer_RequestParsing:
         assert queue.pop() == bytearray(b"completeReq3\r\n")
 
 
-    def test_defaultWriteHook_TwoChunk_OneCompleteRequest_OneSpreadCompleteRequest_OneCompleteRequest_OnePartialRequest(self):
-        delimiters = [b"\r\n"]
-        delimiter = delimiters[0]
-        b = Buffer(delimiters)
-        queue = self._setupRequestHookMock(b)
+    def test_defaultWriteHook_TwoChunk_OneCompleteRequest_OneSpreadCompleteRequest_OneCompleteRequest_OnePartialRequest(self, twoLenDelimiterTestSetup):
+        b, queue = twoLenDelimiterTestSetup
 
         chunk1 = bytearray(b"completeReq1\r\ncomp")
         chunk2 = bytearray(b"leteReq2\r\ncompleteReq3\r\nincompleteR")
@@ -441,11 +422,8 @@ class Test_Buffer_RequestParsing:
         assert queue.pop() == bytearray(b"completeReq3\r\n")
 
 
-    def test_defaultWriteHook_TwoChunk_OneCompleteRequest_OneSpreadCompleteRequest_TwoCompleteRequest(self):
-        delimiters = [b"\r\n"]
-        delimiter = delimiters[0]
-        b = Buffer(delimiters)
-        queue = self._setupRequestHookMock(b)
+    def test_defaultWriteHook_TwoChunk_OneCompleteRequest_OneSpreadCompleteRequest_TwoCompleteRequest(self, twoLenDelimiterTestSetup):
+        b, queue = twoLenDelimiterTestSetup
 
         chunk1 = bytearray(b"completeReq1\r\ncomp")
         chunk2 = bytearray(b"leteReq2\r\ncompleteReq3\r\ncompleteReq4\r\n")
@@ -465,11 +443,8 @@ class Test_Buffer_RequestParsing:
         assert queue.pop() == bytearray(b"completeReq4\r\n")
 
 
-    def test_defaultWriteHook_TwoChunk_OneCompleteRequest_OneSpreadCompleteRequest_TwoCompleteRequest_OnePartialRequest(self):
-        delimiters = [b"\r\n"]
-        delimiter = delimiters[0]
-        b = Buffer(delimiters)
-        queue = self._setupRequestHookMock(b)
+    def test_defaultWriteHook_TwoChunk_OneCompleteRequest_OneSpreadCompleteRequest_TwoCompleteRequest_OnePartialRequest(self, twoLenDelimiterTestSetup):
+        b, queue = twoLenDelimiterTestSetup
 
         chunk1 = bytearray(b"completeReq1\r\ncomp")
         chunk2 = bytearray(b"leteReq2\r\ncompleteReq3\r\ncompleteReq4\r\nincompleteR")
@@ -490,11 +465,8 @@ class Test_Buffer_RequestParsing:
         assert queue.pop() == bytearray(b"completeReq4\r\n")
         
 
-    def test_defaultWriteHook_TwoChunk_OneCompleteRequest_OneSpreadCompleteRequest_ManyCompleteRequest(self):
-        delimiters = [b"\r\n"]
-        delimiter = delimiters[0]
-        b = Buffer(delimiters)
-        queue = self._setupRequestHookMock(b)
+    def test_defaultWriteHook_TwoChunk_OneCompleteRequest_OneSpreadCompleteRequest_ManyCompleteRequest(self, twoLenDelimiterTestSetup):
+        b, queue = twoLenDelimiterTestSetup
 
         chunk1 = bytearray(b"completeReq1\r\ncomp")
         chunk2 = bytearray(b"leteReq2\r\ncompleteReq3\r\ncompleteReq4\r\ncompleteReq5\r\ncompleteReq6\r\n")
@@ -516,11 +488,8 @@ class Test_Buffer_RequestParsing:
         assert queue.pop() == bytearray(b"completeReq6\r\n")
 
 
-    def test_defaultWriteHook_TwoChunk_OneCompleteRequest_OneSpreadCompleteRequest_ManyCompleteRequest_OnePartial(self):
-        delimiters = [b"\r\n"]
-        delimiter = delimiters[0]
-        b = Buffer(delimiters)
-        queue = self._setupRequestHookMock(b)
+    def test_defaultWriteHook_TwoChunk_OneCompleteRequest_OneSpreadCompleteRequest_ManyCompleteRequest_OnePartialRequest(self, twoLenDelimiterTestSetup):
+        b, queue = twoLenDelimiterTestSetup
 
         chunk1 = bytearray(b"completeReq1\r\ncomp")
         chunk2 = bytearray(b"leteReq2\r\ncompleteReq3\r\ncompleteReq4\r\ncompleteReq5\r\ncompleteReq6\r\nincompleteR")
@@ -546,12 +515,10 @@ class Test_Buffer_RequestParsing:
     ## The number of combos are too much
 
 
+
     ## Tests for request delimiter spreading over chunks
-    def test_defaultWriteHook_TwoChunk_OneSpreadDelimiterCompleteRequest(self):
-        delimiters = [b"\r\n"]
-        delimiter = delimiters[0]
-        b = Buffer(delimiters)
-        queue = self._setupRequestHookMock(b)
+    def test_defaultWriteHook_TwoChunk_OneSpreadDelimiterCompleteRequest(self, twoLenDelimiterTestSetup):
+        b, queue = twoLenDelimiterTestSetup
 
         chunk1 = bytearray(b"completeReq")
         chunk2 = bytearray(b"\r\n")
@@ -568,11 +535,8 @@ class Test_Buffer_RequestParsing:
         assert queue.pop() == bytearray(b"completeReq\r\n")
 
 
-    def test_defaultWriteHook_TwoChunk_OneSplitDelimiterCompleteRequest_SizeTwoDelimiter(self):
-        delimiters = [b"\r\n"]
-        delimiter = delimiters[0]
-        b = Buffer(delimiters)
-        queue = self._setupRequestHookMock(b)
+    def test_defaultWriteHook_TwoChunk_OneSplitDelimiterCompleteRequest_SizeTwoDelimiter(self, twoLenDelimiterTestSetup):
+        b, queue = twoLenDelimiterTestSetup
 
         chunk1 = bytearray(b"completeReq\r")
         chunk2 = bytearray(b"\n")
@@ -589,11 +553,8 @@ class Test_Buffer_RequestParsing:
         assert queue.pop() == bytearray(b"completeReq\r\n")
 
 
-    def test_defaultWriteHook_TwoChunk_OneSplitDelimiterCompleteRequest_OnePartialRequest_SizeTwoDelimiter(self):
-        delimiters = [b"\r\n"]
-        delimiter = delimiters[0]
-        b = Buffer(delimiters)
-        queue = self._setupRequestHookMock(b)
+    def test_defaultWriteHook_TwoChunk_OneSplitDelimiterCompleteRequest_OnePartialRequest_SizeTwoDelimiter(self, twoLenDelimiterTestSetup):
+        b, queue = twoLenDelimiterTestSetup
 
         chunk1 = bytearray(b"completeReq\r")
         chunk2 = bytearray(b"\nincompleteR")
@@ -611,11 +572,8 @@ class Test_Buffer_RequestParsing:
         assert queue.pop() == bytearray(b"completeReq\r\n")
 
 
-    def test_defaultWriteHook_TwoChunk_OneSplitDelimiterCompleteRequest_OneCompleteRequest_SizeTwoDelimiter(self):
-        delimiters = [b"\r\n"]
-        delimiter = delimiters[0]
-        b = Buffer(delimiters)
-        queue = self._setupRequestHookMock(b)
+    def test_defaultWriteHook_TwoChunk_OneSplitDelimiterCompleteRequest_OneCompleteRequest_SizeTwoDelimiter(self, twoLenDelimiterTestSetup):
+        b, queue = twoLenDelimiterTestSetup
 
         chunk1 = bytearray(b"completeReq1\r")
         chunk2 = bytearray(b"\ncompleteReq2\r\n")
@@ -633,11 +591,8 @@ class Test_Buffer_RequestParsing:
         assert queue.pop() == bytearray(b"completeReq2\r\n")
 
 
-    def test_defaultWriteHook_TwoChunk_OneSplitDelimiterCompleteRequest_SizeFourDelimiter_Option1(self):
-        delimiters = [b"\r\n\r\n"]
-        delimiter = delimiters[0]
-        b = Buffer(delimiters)
-        queue = self._setupRequestHookMock(b)
+    def test_defaultWriteHook_TwoChunk_OneSplitDelimiterCompleteRequest_SizeFourDelimiter_Option1(self, manyLenDelimiterTestSetup):
+        b, queue = manyLenDelimiterTestSetup
 
         chunk1 = bytearray(b"completeReq\r")
         chunk2 = bytearray(b"\n\r\n")
@@ -654,11 +609,8 @@ class Test_Buffer_RequestParsing:
         assert queue.pop() == bytearray(b"completeReq\r\n\r\n")
 
 
-    def test_defaultWriteHook_TwoChunk_OneSplitDelimiterCompleteRequest_SizeFourDelimiter_Option2(self):
-        delimiters = [b"\r\n\r\n"]
-        delimiter = delimiters[0]
-        b = Buffer(delimiters)
-        queue = self._setupRequestHookMock(b)
+    def test_defaultWriteHook_TwoChunk_OneSplitDelimiterCompleteRequest_SizeFourDelimiter_Option2(self, manyLenDelimiterTestSetup):
+        b, queue = manyLenDelimiterTestSetup
 
         chunk1 = bytearray(b"completeReq\r\n")
         chunk2 = bytearray(b"\r\n")
@@ -673,11 +625,8 @@ class Test_Buffer_RequestParsing:
         assert queue.pop() == bytearray(b"completeReq\r\n\r\n")
 
 
-    def test_defaultWriteHook_TwoChunk_OneSplitDelimiterCompleteRequest_SizeFourDelimiter_Option3(self):
-        delimiters = [b"\r\n\r\n"]
-        delimiter = delimiters[0]
-        b = Buffer(delimiters)
-        queue = self._setupRequestHookMock(b)
+    def test_defaultWriteHook_TwoChunk_OneSplitDelimiterCompleteRequest_SizeFourDelimiter_Option3(self, manyLenDelimiterTestSetup):
+        b, queue = manyLenDelimiterTestSetup
 
         chunk1 = bytearray(b"completeReq\r\n\r")
         chunk2 = bytearray(b"\n")
@@ -693,13 +642,10 @@ class Test_Buffer_RequestParsing:
 
 
 
+class Test_DelimiterParsing:
     ## delimiter chunk tests
-
-    def test_defaultWriteHook_PrevEndBuffer_DLSizeOne_OneChunk_delimited(self) -> None:
-        delimiters = [b"\r"]
-        delimiter = delimiters[0]
-        b = Buffer(delimiters)
-        queue = self._setupRequestHookMock(b)
+    def test_defaultWriteHook_PrevEndBuffer_DLSizeOne_OneChunk_delimited(self, oneLenDelimiterTestSetup) -> None:
+        b, queue = oneLenDelimiterTestSetup
 
         chunk1 = bytearray(b"completeReq\r")
         b.write(chunk1)
@@ -711,11 +657,8 @@ class Test_Buffer_RequestParsing:
         assert len(queue) == 1
         assert queue.pop() == chunk1
 
-    def test_defaultWriteHook_PrevEndBuffer_DLSizeOne_OneChunk_undelimited(self) -> None:
-        delimiters = [b"\r"]
-        delimiter = delimiters[0]
-        b = Buffer(delimiters)
-        queue = self._setupRequestHookMock(b)
+    def test_defaultWriteHook_PrevEndBuffer_DLSizeOne_OneChunk_undelimited(self, oneLenDelimiterTestSetup) -> None:
+        b, queue = oneLenDelimiterTestSetup
 
         chunk1 = bytearray(b"incompleteReq")
         b.write(chunk1)
@@ -726,11 +669,8 @@ class Test_Buffer_RequestParsing:
         assert b._prevEndBuffer == bytearray(b"")
         assert len(queue) == 0
 
-    def test_defaultWriteHook_PrevEndBuffer_DLSizeOne_TwoChunk_FirstDelimited_SecondUndelimited(self) -> None:
-        delimiters = [b"\r"]
-        delimiter = delimiters[0]
-        b = Buffer(delimiters)
-        queue = self._setupRequestHookMock(b)
+    def test_defaultWriteHook_PrevEndBuffer_DLSizeOne_TwoChunk_FirstDelimited_SecondUndelimited(self, oneLenDelimiterTestSetup) -> None:
+        b, queue = oneLenDelimiterTestSetup
 
         chunk1 = bytearray(b"completeReq\r")
         chunk2 = bytearray(b"incompleteReq")
@@ -746,11 +686,8 @@ class Test_Buffer_RequestParsing:
         assert len(queue) == 1
         assert queue.pop() == chunk1
         
-    def test_defaultWriteHook_PrevEndBuffer_DLSizeOne_TwoChunk_FirstDelimited_SecondDelimited(self) -> None:
-        delimiters = [b"\r"]
-        delimiter = delimiters[0]
-        b = Buffer(delimiters)
-        queue = self._setupRequestHookMock(b)
+    def test_defaultWriteHook_PrevEndBuffer_DLSizeOne_TwoChunk_FirstDelimited_SecondDelimited(self, oneLenDelimiterTestSetup) -> None:
+        b, queue = oneLenDelimiterTestSetup
 
         chunk1 = bytearray(b"completeReq\r")
         chunk2 = bytearray(b"completeReq\r")
@@ -766,11 +703,8 @@ class Test_Buffer_RequestParsing:
         assert queue.pop() == chunk1
         assert queue.pop() == chunk2
 
-    def test_defaultWriteHook_PrevEndBuffer_DLSizeOne_TwoChunk_FirstUndelimited_SecondDelimited(self) -> None:
-        delimiters = [b"\r"]
-        delimiter = delimiters[0]
-        b = Buffer(delimiters)
-        queue = self._setupRequestHookMock(b)
+    def test_defaultWriteHook_PrevEndBuffer_DLSizeOne_TwoChunk_FirstUndelimited_SecondDelimited(self, oneLenDelimiterTestSetup) -> None:
+        b, queue = oneLenDelimiterTestSetup
 
         chunk1 = bytearray(b"incompleteR")
         chunk2 = bytearray(b"eq\r")
@@ -785,11 +719,8 @@ class Test_Buffer_RequestParsing:
         assert len(queue) == 1
         assert queue.pop() == chunk1 + chunk2
 
-    def test_defaultWriteHook_PrevEndBuffer_DLSizeOne_TwoChunk_FirstUndelimited_SecondUndelimited(self) -> None:
-        delimiters = [b"\r"]
-        delimiter = delimiters[0]
-        b = Buffer(delimiters)
-        queue = self._setupRequestHookMock(b)
+    def test_defaultWriteHook_PrevEndBuffer_DLSizeOne_TwoChunk_FirstUndelimited_SecondUndelimited(self, oneLenDelimiterTestSetup) -> None:
+        b, queue = oneLenDelimiterTestSetup
 
         chunk1 = bytearray(b"incomplete")
         chunk2 = bytearray(b"Req")
@@ -807,43 +738,44 @@ class Test_Buffer_RequestParsing:
 
 
 
-    def test_defaultWriteHook_PrevEndBuffer_DLSizeTwo_OneChunk_delimited(self) -> None:
-        ...
 
-    def test_defaultWriteHook_PrevEndBuffer_DLSizeTwo_OneChunk_undelimited(self) -> None:
-        ...
+    # def test_defaultWriteHook_PrevEndBuffer_DLSizeTwo_OneChunk_delimited(self) -> None:
+    #     ...
 
-    def test_defaultWriteHook_PrevEndBuffer_DLSizeTwo_TwoChunk_FirstDelimited_SecondUndelimited(self) -> None:
-        ...
+    # def test_defaultWriteHook_PrevEndBuffer_DLSizeTwo_OneChunk_undelimited(self) -> None:
+    #     ...
 
-    def test_defaultWriteHook_PrevEndBuffer_DLSizeTwo_TwoChunk_FirstDelimited_SecondDelimited(self) -> None:
-        ...
+    # def test_defaultWriteHook_PrevEndBuffer_DLSizeTwo_TwoChunk_FirstDelimited_SecondUndelimited(self) -> None:
+    #     ...
 
-    def test_defaultWriteHook_PrevEndBuffer_DLSizeTwo_TwoChunk_FirstUndelimited_SecondDelimited(self) -> None:
-        ...
+    # def test_defaultWriteHook_PrevEndBuffer_DLSizeTwo_TwoChunk_FirstDelimited_SecondDelimited(self) -> None:
+    #     ...
 
-    def test_defaultWriteHook_PrevEndBuffer_DLSizeTwo_TwoChunk_PirstUndelimited_SecondUndelimited(self) -> None:
-        ...
+    # def test_defaultWriteHook_PrevEndBuffer_DLSizeTwo_TwoChunk_FirstUndelimited_SecondDelimited(self) -> None:
+    #     ...
+
+    # def test_defaultWriteHook_PrevEndBuffer_DLSizeTwo_TwoChunk_PirstUndelimited_SecondUndelimited(self) -> None:
+    #     ...
 
 
 
-    def test_defaultWriteHook_PrevEndBuffer_DLSizeMultiple_OneChunk_delimited(self) -> None:
-        ...
+    # def test_defaultWriteHook_PrevEndBuffer_DLSizeMultiple_OneChunk_delimited(self) -> None:
+    #     ...
 
-    def test_defaultWriteHook_PrevEndBuffer_DLSizeMultiple_OneChunk_undelimited(self) -> None:
-        ...
+    # def test_defaultWriteHook_PrevEndBuffer_DLSizeMultiple_OneChunk_undelimited(self) -> None:
+    #     ...
 
-    def test_defaultWriteHook_PrevEndBuffer_DLSizeMultiple_TwoChunk_FirstDelimited_SecondUndelimited(self) -> None:
-        ...
+    # def test_defaultWriteHook_PrevEndBuffer_DLSizeMultiple_TwoChunk_FirstDelimited_SecondUndelimited(self) -> None:
+    #     ...
 
-    def test_defaultWriteHook_PrevEndBuffer_DLSizeMultiple_TwoChunk_FirstDelimited_SecondDelimited(self) -> None:
-        ...
+    # def test_defaultWriteHook_PrevEndBuffer_DLSizeMultiple_TwoChunk_FirstDelimited_SecondDelimited(self) -> None:
+    #     ...
 
-    def test_defaultWriteHook_PrevEndBuffer_DLSizeMultiple_TwoChunk_FirstUndelimited_SecondDelimited(self) -> None:
-        ...
+    # def test_defaultWriteHook_PrevEndBuffer_DLSizeMultiple_TwoChunk_FirstUndelimited_SecondDelimited(self) -> None:
+    #     ...
 
-    def test_defaultWriteHook_PrevEndBuffer_DLSizeMultiple_TwoChunk_PirstUndelimited_SecondUndelimited(self) -> None:
-        ...
+    # def test_defaultWriteHook_PrevEndBuffer_DLSizeMultiple_TwoChunk_PirstUndelimited_SecondUndelimited(self) -> None:
+    #     ...
 
 
 
@@ -853,7 +785,7 @@ class Test_Buffer_RequestParsing:
     ## TODO: Consider adding ManyChunk tests cases
     
 
-    # def test_defaultWriteHook_TwoChunks_OneCompleteRequest(self):
+    # def test_defaultWriteHook_TwoChunks_OneCompleteRequest(self, oneLenDelimiterTestSetup):
     #     delimiters = [b"\r\n"]
     #     delimiter = delimiters[0]
     #     b = Buffer(delimiters)
@@ -877,7 +809,7 @@ class Test_Buffer_RequestParsing:
     #     assert len(queue) == 1
     #     assert queue.pop() == bytearray(b"completeReq\r\n")
 
-    # def test_defaultWriteHook_TwoChunks_OneCompleteRequest_OnePartialRequest(self):
+    # def test_defaultWriteHook_TwoChunks_OneCompleteRequest_OnePartialRequest(self, oneLenDelimiterTestSetup):
     #     delimiters = [b"\r\n"]
     #     delimiter = delimiters[0]
     #     b = Buffer(delimiters)
@@ -901,16 +833,16 @@ class Test_Buffer_RequestParsing:
     #     assert len(queue) == 1
     #     assert queue.pop() == bytearray(b"completeReq\r\n")
 
-    # def test_defaultWriteHook_TwoChunks_TwoCompleteRequest(self):
+    # def test_defaultWriteHook_TwoChunks_TwoCompleteRequest(self, oneLenDelimiterTestSetup):
     #     raise NotImplementedError()
 
-    # def test_defaultWriteHook_TwoChunks_TwoCompleteRequest_OnePartialRequest(self):
+    # def test_defaultWriteHook_TwoChunks_TwoCompleteRequest_OnePartialRequest(self, oneLenDelimiterTestSetup):
     #     raise NotImplementedError()
 
-    # def test_defaultWriteHook_TwoChunks_ManyCompleteRequest(self):
+    # def test_defaultWriteHook_TwoChunks_ManyCompleteRequest(self, oneLenDelimiterTestSetup):
     #     raise NotImplementedError()
 
-    # def test_defaultWriteHook_TwoChunks_ManyCompleteRequest_OnePartialRequest(self):
+    # def test_defaultWriteHook_TwoChunks_ManyCompleteRequest_OnePartialRequest(self, oneLenDelimiterTestSetup):
     #     raise NotImplementedError()
 
 
