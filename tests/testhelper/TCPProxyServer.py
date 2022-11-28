@@ -154,10 +154,17 @@ class TPSTestResources:
             
 
     @classmethod
-    def assertUserConnectionData(cls, connections: List[socket.socket], connectionData: List[bytes], bufferSize: int = 1024) -> None:
+    def assertUserConnectionData(cls, connections: List[socket.socket], connectionData: List[bytes]) -> None:
         ## We want to check that the expected data has been received
         for conn, expectedData in zip(connections, connectionData):
-            assert conn.recv(bufferSize, socket.MSG_PEEK) == expectedData
+            socketData = bytearray()
+            while True:
+                ## NOTE: Avoids race conditions and ensures socket has the entire 
+                ## socket data before performing the assertion
+                socketData = conn.recv(len(expectedData), socket.MSG_PEEK)
+                if len(socketData) == len(expectedData):
+                    break
+            assert socketData == expectedData
     
     @classmethod
     def assertProxyTunnelsState(cls, proxyServer: TCPProxyServer, connections: List[socket.socket], connectionData: List[bytes]) -> None:
@@ -173,26 +180,34 @@ class TPSTestResources:
             
             sendData = connectionData[index] ## sendData = recvData since it is an echo server
             sendBuffer = tunnel.clientToServerBuffer
-            cls._assertProxyBufferState(sendData, sendBuffer)
+            cls._assertProxyBufferState(sendData, sendBuffer, index)
 
             recvData = sendData
             recvBuffer = tunnel.serverToClientBuffer
-            cls._assertProxyBufferState(recvData, recvBuffer)
+            cls._assertProxyBufferState(recvData, recvBuffer, index)
 
     @classmethod
-    def _assertProxyBufferState(cls, testData: bytes, testBuffer: Buffer) -> None:
+    def _assertProxyBufferState(cls, testData: bytes, testBuffer: Buffer, index: int) -> None:
+        ## BUG: There's a bug that's happening on the message boundary (i.e. delimiter)
+        ## It seems that the delimited + undelimited message are stuck into a single item in the queue (odd)
+
+
         ## The data object is "full", so we will use the delimiters to split
         ## -- It's possible to define multiple delimiters
         ## Our check will compare with a single run of the buffer on flat data
         ## --> i.e. instead of multiple chunks, a single chunk is sent
         flatBuffer = Buffer(testBuffer.REQUEST_DELIMITERS)
-        flatBuffer._execRequestParsing(testData)
+        flatBuffer.write(testData)
 
         ## And then we will manually compare state between both buffers
         ## NOTE: This assumes a single run of the flat buffer is correct
         ## -- There already exist tests for the buffer
-        assert flatBuffer._requests == testBuffer._requests
-        assert flatBuffer._data == testBuffer._data
+        # print(f"Index {index}:")
+        # print(flatBuffer)
+        # print(testBuffer, end="\n\n")
+
+        assert flatBuffer._requests == testBuffer._requests ## The remaining requests should be the same
+        # assert flatBuffer._data == testBuffer._data ## The data is likely not the same (since the flatBuffer is never popped from)
         assert flatBuffer._MAX_BUFFER_SIZE == testBuffer._MAX_BUFFER_SIZE
         assert flatBuffer.MAX_DELIMETER_LENGTH == testBuffer.MAX_DELIMETER_LENGTH
         assert flatBuffer.REQUEST_DELIMETER_REGEX == testBuffer.REQUEST_DELIMETER_REGEX

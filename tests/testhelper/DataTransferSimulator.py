@@ -4,7 +4,7 @@ import random
 import datetime
 import string
 
-from typing import List, Callable, Optional
+from typing import List, Callable, Optional, Tuple
 
 class DataTransferSimulator:
     @classmethod
@@ -18,25 +18,21 @@ class DataTransferSimulator:
                                         isEndDelimited: bool = None
                                         ) -> List[bytes]:
 
-
-        ## Validate and prepar a completeConnSender function
+        ## Validate and prepare a completeConnSender function
         completeConnSender = cls._validateArguments(completeConnSender, dataSizeSelector, messageCountSelector,
                              chunkCountSelector, datetimesSelector, delimitersSelector, isEndDelimited)
-
-        ## we create a priority queue containing chunks
-        chunkQueue = queue.PriorityQueue()
 
         ## we have the connectionData arr where connection[i] has sent connectionData[i]
         connectionData = []
 
         ## we iterate over each connection, adding to the chunkQueue
-        for conn in connections:
+        for index, conn in enumerate(connections):
             ## unpack the arguments for the compeleteConnSender function call
             dataSize, messageCount, chunkCount, delimiters, datetimes, isEndDelimited = completeConnSender()
 
             ## we generate data
             generatedData = cls._generateData(dataSize)
-            
+
             ## we then make the data into message (by inserting delimiters)
             dataMessages = cls._convertStreamIntoMessages(generatedData, messageCount, delimiters, isEndDelimited)
    
@@ -45,17 +41,15 @@ class DataTransferSimulator:
 
             ## we then select what indexes the data will be chunked at
             dataChunks = cls._convertMessagesIntoChunks(dataMessages, chunkCount)
+
+            ## the datetimes array must be in sorted in ascending order
+            ## TODO: We are not waiting for datetime Timestamp before sending (we only respect the orderings)
+            dt = datetimes[0] - datetime.timedelta(seconds=1)
             for index, chunk in enumerate(dataChunks):
                 ## we finally select the datetime for each index (  datetime_i <= datetime_i+1)
-                datetime = datetimes[index]
-
-                ##  we then append it to the priority queue 
-                chunkQueue.put((datetime, chunk, conn))
-
-        ## we then iterate over the queue and send it via the corresponding connection
-        while chunkQueue.qsize() > 0:
-            _, chunk, conn = chunkQueue.get()
-            conn.sendall(chunk)
+                assert dt <= datetimes[index]
+                dt = datetimes[index]
+                conn.sendall(chunk)
 
         return connectionData
 
@@ -174,5 +168,25 @@ class DataTransferSimulator:
             conn.setblocking(True) ## we block so that we can let other threads work
             conn.recv(1024, socket.MSG_PEEK) ## peeks at data without consuming it
             conn.setblocking(False)
+
+
+    @classmethod
+    def createRandomConnSender(cls, dataSizeRange: Tuple[int, int],
+                                    messageCountRange: Tuple[int, int],
+                                    chunkCountRange: Tuple[int, int],
+                                    delimiterList: List[bytes],
+                                    isEndDelimited: bool,
+                                    testTimeRange: int    ## The range is (0, X) where 0 is constant
+                            ) -> Callable:
+        def completeConnSender():
+            nonlocal delimiterList, testTimeRange, dataSizeRange, isEndDelimited
+            dataSize = random.randint(*dataSizeRange)
+            messageCount = random.randint(*messageCountRange)
+            chunkCount = random.randint(*chunkCountRange)
+            delimiters = DataTransferSimulator._delimitersSelector(delimiterList, messageCount) ## creates a sequence of delimiters
+            datetimes = DataTransferSimulator._datetimesSelector(testTimeRange, chunkCount) ## creates a sequence of ordered datetime
+            return (dataSize, messageCount, chunkCount, delimiters, datetimes, isEndDelimited)
+
+        return completeConnSender
 
 
