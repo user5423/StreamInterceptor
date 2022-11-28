@@ -62,6 +62,8 @@ class Test_Buffer_RequestParsing:
         
         assert len(queue) == 0
 
+        assert b._prevEndBuffer == bytearray(b"R")
+
 
     def test_defaultWriteHook_SingleChunk_OneCompleteRequest(self):
         delimiters = [b"\r\n"]
@@ -78,6 +80,8 @@ class Test_Buffer_RequestParsing:
         
         assert len(queue) == 1
         assert queue.pop() == req1
+
+        assert b._prevEndBuffer == bytearray(b"")
 
 
     def test_defaultWriteHook_SingleChunk_OneCompleteRequest_OnePartialRequest(self):
@@ -99,6 +103,7 @@ class Test_Buffer_RequestParsing:
         assert len(queue) == 1
         assert queue.pop() == req1
 
+        assert b._prevEndBuffer == bytearray(b"R")
 
     def test_defaultWriteHook_SingleChunk_TwoCompleteRequest(self):
         delimiters = [b"\r\n"]
@@ -119,6 +124,7 @@ class Test_Buffer_RequestParsing:
         assert queue.pop() == req1
         assert queue.pop() == req2
 
+        assert b._prevEndBuffer == bytearray(b"")
 
     def test_defaultWriteHook_SingleChunk_TwoCompleteRequest_OnePartialRequest(self):
         delimiters = [b"\r\n"]
@@ -141,6 +147,7 @@ class Test_Buffer_RequestParsing:
         assert queue.pop() == req1
         assert queue.pop() == req2
 
+        assert b._prevEndBuffer == bytearray(b"R")
 
     def test_defaultWriteHook_SingleChunk_ManyCompleteRequest(self):
         delimiters = [b"\r\n"]
@@ -167,6 +174,7 @@ class Test_Buffer_RequestParsing:
         assert queue.pop() == req4
         assert queue.pop() == req5
     
+        assert b._prevEndBuffer == bytearray(b"")
 
     def test_defaultWriteHook_SingleChunk_ManyCompleteRequest_OnePartialRequest(self):
         delimiters = [b"\r\n"]
@@ -193,6 +201,8 @@ class Test_Buffer_RequestParsing:
         assert queue.pop() == req3
         assert queue.pop() == req4
 
+        assert b._prevEndBuffer == bytearray(b"R")
+
     
     ## Tests for request spreading over chunks (spread from start chunk 1 to mid chunk 2)
     def test_defaultWriteHook_TwoChunk_OneSpreadCompleteRequest_OneCompleteRequest(self):
@@ -204,7 +214,9 @@ class Test_Buffer_RequestParsing:
         chunk1 = bytearray(b"complete")
         chunk2 = bytearray(b"Req1\r\ncompleteReq2\r\n")
         b.write(chunk1)
+        assert b._prevEndBuffer == bytearray(b"e")
         b.write(chunk2)
+        assert b._prevEndBuffer == bytearray(b"")
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
         assert b._data == chunk1 + chunk2
@@ -224,8 +236,9 @@ class Test_Buffer_RequestParsing:
         chunk1 = bytearray(b"complete")
         chunk2 = bytearray(b"Req1\r\ncompleteReq2\r\nincompleteR")
         b.write(chunk1)
+        assert b._prevEndBuffer == bytearray(b"e")
         b.write(chunk2)
-
+        assert b._prevEndBuffer == bytearray(b"R")
         ## Data should be removed buffer()._data once popped from buffer()._requests
         assert b._data == chunk1 + chunk2
         assert len(b._requests) == 1
@@ -245,7 +258,9 @@ class Test_Buffer_RequestParsing:
         chunk1 = bytearray(b"complete")
         chunk2 = bytearray(b"Req1\r\ncompleteReq2\r\ncompleteReq3\r\n")
         b.write(chunk1)
+        assert b._prevEndBuffer == bytearray(b"e")
         b.write(chunk2)
+        assert b._prevEndBuffer == bytearray(b"")
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
         assert b._data == chunk1 + chunk2
@@ -266,7 +281,9 @@ class Test_Buffer_RequestParsing:
         chunk1 = bytearray(b"complete")
         chunk2 = bytearray(b"Req1\r\ncompleteReq2\r\ncompleteReq3\r\nincompleteR")
         b.write(chunk1)
+        assert b._prevEndBuffer == bytearray(b"e")
         b.write(chunk2)
+        assert b._prevEndBuffer == bytearray(b"R")
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
         assert b._data == chunk1 + chunk2
@@ -279,6 +296,7 @@ class Test_Buffer_RequestParsing:
         assert queue.pop() == bytearray(b"completeReq3\r\n")
 
 
+
     def test_defaultWriteHook_TwoChunk_OneSpreadCompleteRequest_ManyCompleteRequest(self):
         delimiters = [b"\r\n"]
         delimiter = delimiters[0]
@@ -288,7 +306,9 @@ class Test_Buffer_RequestParsing:
         chunk1 = bytearray(b"complete")
         chunk2 = bytearray(b"Req1\r\ncompleteReq2\r\ncompleteReq3\r\ncompleteReq4\r\ncompleteReq5\r\n")
         b.write(chunk1)
+        assert b._prevEndBuffer == bytearray(b"e")
         b.write(chunk2)
+        assert b._prevEndBuffer == bytearray(b"")
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
         assert b._data == chunk1 + chunk2
@@ -311,7 +331,9 @@ class Test_Buffer_RequestParsing:
         chunk1 = bytearray(b"complete")
         chunk2 = bytearray(b"Req1\r\ncompleteReq2\r\ncompleteReq3\r\ncompleteReq4\r\ncompleteReq5\r\nincompleteR")
         b.write(chunk1)
+        assert b._prevEndBuffer == bytearray(b"e")
         b.write(chunk2)
+        assert b._prevEndBuffer == bytearray(b"R")
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
         assert b._data == chunk1 + chunk2
@@ -336,7 +358,9 @@ class Test_Buffer_RequestParsing:
         chunk1 = bytearray(b"completeReq1\r\ncomp")
         chunk2 = bytearray(b"leteReq2\r\n")
         b.write(chunk1)
+        assert b._prevEndBuffer == bytearray(b"p")
         b.write(chunk2)
+        assert b._prevEndBuffer == bytearray(b"")
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
         assert b._data == chunk1 + chunk2
@@ -356,7 +380,9 @@ class Test_Buffer_RequestParsing:
         chunk1 = bytearray(b"completeReq1\r\ncomp")
         chunk2 = bytearray(b"leteReq2\r\nincompleteR")
         b.write(chunk1)
+        assert b._prevEndBuffer == bytearray(b"p")
         b.write(chunk2)
+        assert b._prevEndBuffer == bytearray(b"R")
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
         assert b._data == chunk1 + chunk2
@@ -377,7 +403,9 @@ class Test_Buffer_RequestParsing:
         chunk1 = bytearray(b"completeReq1\r\ncomp")
         chunk2 = bytearray(b"leteReq2\r\ncompleteReq3\r\n")
         b.write(chunk1)
+        assert b._prevEndBuffer == bytearray(b"p")
         b.write(chunk2)
+        assert b._prevEndBuffer == bytearray(b"")
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
         assert b._data == chunk1 + chunk2
@@ -398,7 +426,9 @@ class Test_Buffer_RequestParsing:
         chunk1 = bytearray(b"completeReq1\r\ncomp")
         chunk2 = bytearray(b"leteReq2\r\ncompleteReq3\r\nincompleteR")
         b.write(chunk1)
+        assert b._prevEndBuffer == bytearray(b"p")
         b.write(chunk2)
+        assert b._prevEndBuffer == bytearray(b"R")
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
         assert b._data == chunk1 + chunk2
@@ -420,7 +450,9 @@ class Test_Buffer_RequestParsing:
         chunk1 = bytearray(b"completeReq1\r\ncomp")
         chunk2 = bytearray(b"leteReq2\r\ncompleteReq3\r\ncompleteReq4\r\n")
         b.write(chunk1)
+        assert b._prevEndBuffer == bytearray(b"p")
         b.write(chunk2)
+        assert b._prevEndBuffer == bytearray(b"")
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
         assert b._data == chunk1 + chunk2
@@ -442,7 +474,9 @@ class Test_Buffer_RequestParsing:
         chunk1 = bytearray(b"completeReq1\r\ncomp")
         chunk2 = bytearray(b"leteReq2\r\ncompleteReq3\r\ncompleteReq4\r\nincompleteR")
         b.write(chunk1)
+        assert b._prevEndBuffer == bytearray(b"p")
         b.write(chunk2)
+        assert b._prevEndBuffer == bytearray(b"R")
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
         assert b._data == chunk1 + chunk2
@@ -454,7 +488,7 @@ class Test_Buffer_RequestParsing:
         assert queue.pop() == bytearray(b"completeReq2\r\n")
         assert queue.pop() == bytearray(b"completeReq3\r\n")
         assert queue.pop() == bytearray(b"completeReq4\r\n")
-
+        
 
     def test_defaultWriteHook_TwoChunk_OneCompleteRequest_OneSpreadCompleteRequest_ManyCompleteRequest(self):
         delimiters = [b"\r\n"]
@@ -465,7 +499,9 @@ class Test_Buffer_RequestParsing:
         chunk1 = bytearray(b"completeReq1\r\ncomp")
         chunk2 = bytearray(b"leteReq2\r\ncompleteReq3\r\ncompleteReq4\r\ncompleteReq5\r\ncompleteReq6\r\n")
         b.write(chunk1)
+        assert b._prevEndBuffer == bytearray(b"p")
         b.write(chunk2)
+        assert b._prevEndBuffer == bytearray(b"")
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
         assert b._data == chunk1 + chunk2
@@ -489,7 +525,9 @@ class Test_Buffer_RequestParsing:
         chunk1 = bytearray(b"completeReq1\r\ncomp")
         chunk2 = bytearray(b"leteReq2\r\ncompleteReq3\r\ncompleteReq4\r\ncompleteReq5\r\ncompleteReq6\r\nincompleteR")
         b.write(chunk1)
+        assert b._prevEndBuffer == bytearray(b"p")
         b.write(chunk2)
+        assert b._prevEndBuffer == bytearray(b"R")
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
         assert b._data == chunk1 + chunk2
@@ -503,7 +541,6 @@ class Test_Buffer_RequestParsing:
         assert queue.pop() == bytearray(b"completeReq4\r\n")
         assert queue.pop() == bytearray(b"completeReq5\r\n")
         assert queue.pop() == bytearray(b"completeReq6\r\n")
-
     
     ## TODO: Tests for request spreading over chunks (spread from start from mid chunk 1 to end chunk 2)
     ## The number of combos are too much
@@ -519,7 +556,9 @@ class Test_Buffer_RequestParsing:
         chunk1 = bytearray(b"completeReq")
         chunk2 = bytearray(b"\r\n")
         b.write(chunk1)
+        assert b._prevEndBuffer == bytearray(b"q")
         b.write(chunk2)
+        assert b._prevEndBuffer == bytearray(b"")
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
         assert b._data == chunk1 + chunk2
@@ -538,7 +577,9 @@ class Test_Buffer_RequestParsing:
         chunk1 = bytearray(b"completeReq\r")
         chunk2 = bytearray(b"\n")
         b.write(chunk1)
+        assert b._prevEndBuffer == bytearray(b"\r")
         b.write(chunk2)
+        assert b._prevEndBuffer == bytearray(b"")
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
         assert b._data == chunk1 + chunk2
@@ -557,7 +598,9 @@ class Test_Buffer_RequestParsing:
         chunk1 = bytearray(b"completeReq\r")
         chunk2 = bytearray(b"\nincompleteR")
         b.write(chunk1)
+        assert b._prevEndBuffer == bytearray(b"\r")
         b.write(chunk2)
+        assert b._prevEndBuffer == bytearray(b"R")
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
         assert b._data == chunk1 + chunk2
@@ -577,7 +620,9 @@ class Test_Buffer_RequestParsing:
         chunk1 = bytearray(b"completeReq1\r")
         chunk2 = bytearray(b"\ncompleteReq2\r\n")
         b.write(chunk1)
+        assert b._prevEndBuffer == bytearray(b"\r")
         b.write(chunk2)
+        assert b._prevEndBuffer == bytearray(b"")
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
         assert b._data == chunk1 + chunk2
@@ -597,7 +642,9 @@ class Test_Buffer_RequestParsing:
         chunk1 = bytearray(b"completeReq\r")
         chunk2 = bytearray(b"\n\r\n")
         b.write(chunk1)
+        assert b._prevEndBuffer == bytearray(b"eq\r")
         b.write(chunk2)
+        assert b._prevEndBuffer == bytearray(b"")
 
         ## Data should be removed buffer()._data once popped from buffer()._requests
         assert b._data == chunk1 + chunk2
@@ -643,6 +690,161 @@ class Test_Buffer_RequestParsing:
         
         assert len(queue) == 1
         assert queue.pop() == bytearray(b"completeReq\r\n\r\n")
+
+
+
+    ## delimiter chunk tests
+
+    def test_defaultWriteHook_PrevEndBuffer_DLSizeOne_OneChunk_delimited(self) -> None:
+        delimiters = [b"\r"]
+        delimiter = delimiters[0]
+        b = Buffer(delimiters)
+        queue = self._setupRequestHookMock(b)
+
+        chunk1 = bytearray(b"completeReq\r")
+        b.write(chunk1)
+
+        assert b._data == chunk1
+        assert len(b._requests) == 0
+        assert b._prevEndBuffer == bytearray(b"")
+
+        assert len(queue) == 1
+        assert queue.pop() == chunk1
+
+    def test_defaultWriteHook_PrevEndBuffer_DLSizeOne_OneChunk_undelimited(self) -> None:
+        delimiters = [b"\r"]
+        delimiter = delimiters[0]
+        b = Buffer(delimiters)
+        queue = self._setupRequestHookMock(b)
+
+        chunk1 = bytearray(b"incompleteReq")
+        b.write(chunk1)
+
+        assert b._data == chunk1
+        assert len(b._requests) == 1
+        assert b._requests[-1] == [chunk1, False]
+        assert b._prevEndBuffer == bytearray(b"")
+        assert len(queue) == 0
+
+    def test_defaultWriteHook_PrevEndBuffer_DLSizeOne_TwoChunk_FirstDelimited_SecondUndelimited(self) -> None:
+        delimiters = [b"\r"]
+        delimiter = delimiters[0]
+        b = Buffer(delimiters)
+        queue = self._setupRequestHookMock(b)
+
+        chunk1 = bytearray(b"completeReq\r")
+        chunk2 = bytearray(b"incompleteReq")
+        b.write(chunk1)
+        assert b._prevEndBuffer == bytearray(b"")
+        b.write(chunk2)
+        assert b._prevEndBuffer == bytearray(b"")
+
+        assert b._data == chunk1 + chunk2
+        assert len(b._requests) == 1
+        assert b._requests[-1] == [chunk2, False]
+
+        assert len(queue) == 1
+        assert queue.pop() == chunk1
+        
+    def test_defaultWriteHook_PrevEndBuffer_DLSizeOne_TwoChunk_FirstDelimited_SecondDelimited(self) -> None:
+        delimiters = [b"\r"]
+        delimiter = delimiters[0]
+        b = Buffer(delimiters)
+        queue = self._setupRequestHookMock(b)
+
+        chunk1 = bytearray(b"completeReq\r")
+        chunk2 = bytearray(b"completeReq\r")
+        b.write(chunk1)
+        assert b._prevEndBuffer == bytearray(b"")
+        b.write(chunk2)
+        assert b._prevEndBuffer == bytearray(b"")
+
+        assert b._data == chunk1 + chunk2
+        assert len(b._requests) == 0
+
+        assert len(queue) == 2
+        assert queue.pop() == chunk1
+        assert queue.pop() == chunk2
+
+    def test_defaultWriteHook_PrevEndBuffer_DLSizeOne_TwoChunk_FirstUndelimited_SecondDelimited(self) -> None:
+        delimiters = [b"\r"]
+        delimiter = delimiters[0]
+        b = Buffer(delimiters)
+        queue = self._setupRequestHookMock(b)
+
+        chunk1 = bytearray(b"incompleteR")
+        chunk2 = bytearray(b"eq\r")
+        b.write(chunk1)
+        assert b._prevEndBuffer == bytearray(b"")
+        b.write(chunk2)
+        assert b._prevEndBuffer == bytearray(b"")
+
+        assert b._data == chunk1 + chunk2
+        assert len(b._requests) == 0
+        
+        assert len(queue) == 1
+        assert queue.pop() == chunk1 + chunk2
+
+    def test_defaultWriteHook_PrevEndBuffer_DLSizeOne_TwoChunk_FirstUndelimited_SecondUndelimited(self) -> None:
+        delimiters = [b"\r"]
+        delimiter = delimiters[0]
+        b = Buffer(delimiters)
+        queue = self._setupRequestHookMock(b)
+
+        chunk1 = bytearray(b"incomplete")
+        chunk2 = bytearray(b"Req")
+        b.write(chunk1)
+        assert b._prevEndBuffer == bytearray(b"")
+        b.write(chunk2)
+        assert b._prevEndBuffer == bytearray(b"")
+
+        assert b._data == chunk1 + chunk2
+        assert len(b._requests) == 1
+        assert b._requests[-1] == [chunk1+chunk2, False]
+        
+        assert len(queue) == 0
+
+
+
+
+    def test_defaultWriteHook_PrevEndBuffer_DLSizeTwo_OneChunk_delimited(self) -> None:
+        ...
+
+    def test_defaultWriteHook_PrevEndBuffer_DLSizeTwo_OneChunk_undelimited(self) -> None:
+        ...
+
+    def test_defaultWriteHook_PrevEndBuffer_DLSizeTwo_TwoChunk_FirstDelimited_SecondUndelimited(self) -> None:
+        ...
+
+    def test_defaultWriteHook_PrevEndBuffer_DLSizeTwo_TwoChunk_FirstDelimited_SecondDelimited(self) -> None:
+        ...
+
+    def test_defaultWriteHook_PrevEndBuffer_DLSizeTwo_TwoChunk_FirstUndelimited_SecondDelimited(self) -> None:
+        ...
+
+    def test_defaultWriteHook_PrevEndBuffer_DLSizeTwo_TwoChunk_PirstUndelimited_SecondUndelimited(self) -> None:
+        ...
+
+
+
+    def test_defaultWriteHook_PrevEndBuffer_DLSizeMultiple_OneChunk_delimited(self) -> None:
+        ...
+
+    def test_defaultWriteHook_PrevEndBuffer_DLSizeMultiple_OneChunk_undelimited(self) -> None:
+        ...
+
+    def test_defaultWriteHook_PrevEndBuffer_DLSizeMultiple_TwoChunk_FirstDelimited_SecondUndelimited(self) -> None:
+        ...
+
+    def test_defaultWriteHook_PrevEndBuffer_DLSizeMultiple_TwoChunk_FirstDelimited_SecondDelimited(self) -> None:
+        ...
+
+    def test_defaultWriteHook_PrevEndBuffer_DLSizeMultiple_TwoChunk_FirstUndelimited_SecondDelimited(self) -> None:
+        ...
+
+    def test_defaultWriteHook_PrevEndBuffer_DLSizeMultiple_TwoChunk_PirstUndelimited_SecondUndelimited(self) -> None:
+        ...
+
 
 
     ## TODO: Consider restructuring delimiter chunk-split tests
