@@ -85,6 +85,7 @@ class Test_Buffer_ByteOperations:
         assert b.read(-1) == b._data
         assert bufferLength == len(b._data)
         assert len(b._requests) == 0
+        assert b._prevEndBuffer == bytearray()
 
         
     def test_read_zeroBytes(self):
@@ -97,6 +98,7 @@ class Test_Buffer_ByteOperations:
         assert b.read(0) == b._data[0:0]
         assert bufferLength == len(b._data)
         assert len(b._requests) == 0
+        assert b._prevEndBuffer == bytearray()
 
         
     def test_read_oneByte(self):
@@ -109,6 +111,7 @@ class Test_Buffer_ByteOperations:
         assert b.read(1) == b._data[0:1]
         assert bufferLength == len(b._data)
         assert len(b._requests) == 0
+        assert b._prevEndBuffer == bytearray()
         
         
     def test_read_manyBytes(self):
@@ -118,10 +121,12 @@ class Test_Buffer_ByteOperations:
         b._data += bytearray(b"testdata")
         bufferLength = len(b._data)
         readLength = bufferLength // 2
+        assert b._prevEndBuffer == bytearray()
         
         assert b.read(readLength) == b._data[0:readLength]
         assert bufferLength == len(b._data)
         assert len(b._requests) == 0
+        assert b._prevEndBuffer == bytearray()
         
     
     ## NOTE: These tests are in the scenario where the number of desired bytes
@@ -136,6 +141,7 @@ class Test_Buffer_ByteOperations:
         assert b.read(-1) == b._data
         assert bufferLength == len(b._data)
         assert len(b._requests) == 0
+        assert b._prevEndBuffer == bytearray()
         
     def test_read_zeroBytes_zeroBuffer(self):
         delimiters = [b"\r\n"]
@@ -147,6 +153,7 @@ class Test_Buffer_ByteOperations:
         assert b.read(0) == bytearray()
         assert bufferLength == 0
         assert len(b._requests) == 0
+        assert b._prevEndBuffer == bytearray()
         
     def test_read_oneByte_zeroBuffer(self):
         delimiters = [b"\r\n"]
@@ -158,6 +165,7 @@ class Test_Buffer_ByteOperations:
         assert b.read(1) == bytearray()
         assert bufferLength == 0
         assert len(b._requests) == 0
+        assert b._prevEndBuffer == bytearray()
         
         
     def test_read_manyBytes_oneBuffer(self):
@@ -171,6 +179,7 @@ class Test_Buffer_ByteOperations:
         assert b.read(bufferLength + 1) == b._data
         assert bufferLength == len(b._data)
         assert len(b._requests) == 0
+        assert b._prevEndBuffer == bytearray()
         
     
    
@@ -191,6 +200,7 @@ class Test_Buffer_ByteOperations:
         assert testBytes == b.pop(-1)
         assert len(b._data) == 0
         assert len(b._requests) == 0
+        assert b._prevEndBuffer == bytearray()
 
         
     def test_pop_zeroBytes(self):
@@ -204,6 +214,7 @@ class Test_Buffer_ByteOperations:
         assert testBytes[0:0] == b.pop(0)
         assert bufferLength == len(b._data)
         assert len(b._requests) == 0
+        assert b._prevEndBuffer == bytearray()
 
         
     def test_pop_oneByte(self):
@@ -218,6 +229,7 @@ class Test_Buffer_ByteOperations:
         assert testBytes[0:1] == b.pop(1) 
         assert bufferLength - popLength == len(b._data)
         assert len(b._requests) == 0
+        assert b._prevEndBuffer == bytearray()
         
         
     def test_pop_manyBytes(self):
@@ -232,6 +244,7 @@ class Test_Buffer_ByteOperations:
         assert testBytes[0:popLength] == b.pop(popLength)
         assert bufferLength - popLength == len(b._data)
         assert len(b._requests) == 0
+        assert b._prevEndBuffer == bytearray()
         
     
     ## NOTE: These tests are in the scenario where the number of desired bytes
@@ -245,6 +258,7 @@ class Test_Buffer_ByteOperations:
         assert b._data == b.pop(-1)
         assert len(b._data) == 0
         assert len(b._requests) == 0
+        assert b._prevEndBuffer == bytearray()
         
     def test_pop_zeroBytes_zeroBuffer(self):
         delimiters = [b"\r\n"]
@@ -255,6 +269,7 @@ class Test_Buffer_ByteOperations:
         assert bytearray() == b.pop(0)
         assert len(b._data) == 0
         assert len(b._requests) == 0
+        assert b._prevEndBuffer == bytearray()
         
     def test_pop_oneByte_zeroBuffer(self):
         delimiters = [b"\r\n"]
@@ -265,6 +280,7 @@ class Test_Buffer_ByteOperations:
         assert bytearray() == b.pop(1)
         assert len(b._data) == 0
         assert len(b._requests) == 0
+        assert b._prevEndBuffer == bytearray()
         
         
     def test_pop_manyBytes_oneBuffer(self):
@@ -278,6 +294,7 @@ class Test_Buffer_ByteOperations:
         assert testBytes == b.pop(bufferLength)
         assert len(b._data) == 0
         assert len(b._requests) == 0
+        assert b._prevEndBuffer == bytearray()
         
     
     
@@ -294,6 +311,7 @@ class Test_Buffer_ByteOperations:
 
         assert b._data == testBytes
         assert len(b._requests) == 0
+        assert b._prevEndBuffer == bytearray()
 
     def test_write_stubbedParsing_oneByte(self):
         delimiters = [b"\r\n"]
@@ -305,6 +323,7 @@ class Test_Buffer_ByteOperations:
         
         assert len(b._data) == len(testBytes)
         assert len(b._requests) == 0
+        assert b._prevEndBuffer == bytearray()
         
     def test_write_stubbedParsing_manyBytes(self):
         delimiters = [b"\r\n"]
@@ -316,6 +335,8 @@ class Test_Buffer_ByteOperations:
         
         assert len(b._data) == len(testBytes)
         assert len(b._requests) == 0
+        assert b._prevEndBuffer == bytearray()
+
 
     def test_write_stubbedParsing_zeroBytes_nonEmptyBuffer(self):
         delimiters = [b"\r\n"]
@@ -328,6 +349,8 @@ class Test_Buffer_ByteOperations:
         
         assert b._data == bytearray(b"data")
         assert len(b._requests) == 0
+        assert b._prevEndBuffer == bytearray()
+
 
     def test_write_stubbedParsing_oneByte_nonEmptyBuffer(self):
         delimiters = [b"\r\n"]
@@ -340,6 +363,8 @@ class Test_Buffer_ByteOperations:
         
         assert b._data == bytearray(b"tdata")
         assert len(b._requests) == 0
+        assert b._prevEndBuffer == bytearray()
+
 
     def test_write_stubbedParsing_manyBytes_nonEmptyBuffer(self):
         delimiters = [b"\r\n"]
@@ -352,6 +377,7 @@ class Test_Buffer_ByteOperations:
 
         assert b._data == bytearray(bytearray(b"testdata"))
         assert len(b._requests) == 0
+        assert b._prevEndBuffer == bytearray()
 
     def test_write_stubbedParsing_manyBytes_fullBuffer(self):
         delimiters = [b"\r\n"]
@@ -380,6 +406,8 @@ class Test_Buffer_RequestQueueOperations:
         assert "Cannot peak" in str(excInfo.value)
         assert len(b._data) == 0
         assert len(b._requests) == 0
+        assert b._prevEndBuffer == bytearray()
+
 
 
     def test_peakFromQueue_singleUndelimited(self):
@@ -394,6 +422,8 @@ class Test_Buffer_RequestQueueOperations:
         assert len(b._requests) == 1
         assert b.peakFromQueue() == [req1, False]
         assert b._data == req1
+        assert b._prevEndBuffer == bytearray()
+
 
     def test_peakFromQueue_singleDelimited(self):
         delimiters = [b"\r\n"]
@@ -407,6 +437,8 @@ class Test_Buffer_RequestQueueOperations:
         assert len(b._requests) == 1
         assert b.peakFromQueue() == [req1, True]
         assert b._data == req1
+        assert b._prevEndBuffer == bytearray()
+
 
 
     def test_peakFromQueue_manyUndelimited(self):
@@ -429,6 +461,7 @@ class Test_Buffer_RequestQueueOperations:
         assert len(b._requests) == 4
         assert b.peakFromQueue() == [req4, False]
         assert b._data == req1 + req2 + req3 + req4
+        assert b._prevEndBuffer == bytearray()
 
 
     def test_peakFromQueue_manyDelimited(self):
@@ -449,6 +482,7 @@ class Test_Buffer_RequestQueueOperations:
         assert len(b._requests) == 4
         assert b.peakFromQueue() == [req4, True]
         assert b._data == req1 + req2 + req3 + req4
+        assert b._prevEndBuffer == bytearray()
 
 
     ## pushToQueue()
@@ -463,6 +497,7 @@ class Test_Buffer_RequestQueueOperations:
         assert len(b._requests) == 1
         assert b._requests[-1] == request
         assert len(b._data) == 0
+        assert b._prevEndBuffer == bytearray()
 
 
     def test_pushToQueue_empty_Delimited(self):
@@ -476,6 +511,7 @@ class Test_Buffer_RequestQueueOperations:
         assert len(b._requests) == 1
         assert b._requests[-1] == request
         assert len(b._data) == 0
+        assert b._prevEndBuffer == bytearray()
 
 
     def test_pushToQueue_single_PrevUndelimited_CurrentDelimited(self):
@@ -491,6 +527,7 @@ class Test_Buffer_RequestQueueOperations:
         assert len(b._requests) == 1
         assert b._requests[-1][0] == request1[0] + request2[0]
         assert b._requests[-1][1] == True
+        assert b._prevEndBuffer == bytearray()
 
 
     def test_pushToQueue_single_PrevUndelimited_CurrentUndelimited(self):
@@ -506,6 +543,7 @@ class Test_Buffer_RequestQueueOperations:
         assert len(b._requests) == 1
         assert b._requests[-1][0] == request1[0] + request2[0]
         assert b._requests[-1][1] == False
+        assert b._prevEndBuffer == bytearray()
 
 
     def test_pushToQueue_single_PrevDelimited_currentUndelimited(self):
@@ -522,6 +560,7 @@ class Test_Buffer_RequestQueueOperations:
         assert b._requests[0] == request1
         assert b._requests[1] == request2
         assert len(b._data) == 0
+        assert b._prevEndBuffer == bytearray()
 
 
     def test_pushToQueue_single_PrevDelimited_currentDelimited(self):
@@ -538,6 +577,7 @@ class Test_Buffer_RequestQueueOperations:
         assert b._requests[0] == request1
         assert b._requests[1] == request2
         assert len(b._data) == 0
+        assert b._prevEndBuffer == bytearray()
 
 
     def test_pushToQueue_many_prevDelimited_currentDelimited(self):
@@ -560,6 +600,7 @@ class Test_Buffer_RequestQueueOperations:
         assert b._requests[2] == request3
         assert b._requests[3] == request4
         assert len(b._data) == 0
+        assert b._prevEndBuffer == bytearray()
 
     def test_pushToQueue_many_prevDelimited_currentUndelimited(self):
         delimiters = [b"\r\n"]
@@ -581,6 +622,7 @@ class Test_Buffer_RequestQueueOperations:
         assert b._requests[2] == request3
         assert b._requests[3] == request4
         assert len(b._data) == 0
+        assert b._prevEndBuffer == bytearray()
 
 
     def test_pushToQueue_many_prevUndelimited_currentUndelimited(self):
@@ -602,6 +644,7 @@ class Test_Buffer_RequestQueueOperations:
         assert b._requests[1] == request2
         assert b._requests[2] == [request3[0] + request4[0], False]
         assert len(b._data) == 0
+        assert b._prevEndBuffer == bytearray()
 
     def test_pushToQueue_many_prevUndelimited_currentDelimited(self):
         delimiters = [b"\r\n"]
@@ -622,6 +665,7 @@ class Test_Buffer_RequestQueueOperations:
         assert b._requests[1] == request2
         assert b._requests[2] == [request3[0] + request4[0], True]
         assert len(b._data) == 0
+        assert b._prevEndBuffer == bytearray()
     
 
     ## popFromQueue()
@@ -636,6 +680,7 @@ class Test_Buffer_RequestQueueOperations:
         assert "Cannot pop" in str(excInfo.value)
         assert "empty" in str(excInfo.value)
         assert len(b._requests) == 0
+        assert b._prevEndBuffer == bytearray()
 
 
     def test_popFromQueue_single_Undelimited(self):
@@ -652,6 +697,7 @@ class Test_Buffer_RequestQueueOperations:
         assert "Cannot pop" in str(excInfo.value)
         assert "undelimited" in str(excInfo.value)
         assert len(b._requests) == 1
+        assert b._prevEndBuffer == bytearray()
 
 
     def test_popFromQueue_single_Delimited(self):
@@ -664,6 +710,7 @@ class Test_Buffer_RequestQueueOperations:
 
         assert b.popFromQueue() == request
         assert len(b._requests) == 0
+        assert b._prevEndBuffer == bytearray()
 
 
     def test_popFromQueue_many_Undelimited(self):
@@ -690,6 +737,7 @@ class Test_Buffer_RequestQueueOperations:
         assert "Cannot pop" in str(excInfo.value)
         assert "undelimited" in str(excInfo.value)
         assert len(b._requests) == 1
+        assert b._prevEndBuffer == bytearray()
 
 
     def test_popFromQueue_many_Delimited(self):
@@ -712,6 +760,7 @@ class Test_Buffer_RequestQueueOperations:
         assert b.popFromQueue() == request4
 
         assert len(b._requests) == 0
+        assert b._prevEndBuffer == bytearray()
 
     ## emptyQueue
     ## singleQueue (undelimited vs delimited)
