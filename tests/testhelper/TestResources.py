@@ -6,7 +6,7 @@ from typing import Tuple, List
 
 sys.path.insert(0, os.path.join("..", "src"))
 sys.path.insert(0, "src")
-from tcp_proxyserver import ProxyTunnel
+from tcp_proxyserver import ProxyTunnel, StreamInterceptor
 from _proxyDS import Buffer
 ## TODO: At some point in the future we want to 
 ## perform UDP and TCP tests
@@ -17,7 +17,7 @@ class PTTestResources:
 
     @staticmethod
     def createMockStreamInterceptor():
-        class mockStreamInterceptor:
+        class mockStreamInterceptor(StreamInterceptor):
             REQUEST_DELIMITERS = [b"\r\n"]
             def __init__(self):
                 self.clientToServerDeque = collections.deque([])

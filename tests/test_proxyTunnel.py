@@ -11,7 +11,7 @@ sys.path.insert(0, "src")
 from tcp_proxyserver import ProxyTunnel
 from _proxyDS import Buffer
 from _exceptions import *
-from _testResources import PTTestResources
+from tests.testhelper.TestResources import PTTestResources
 
 ## Fixtures
 @pytest.fixture(scope="function")

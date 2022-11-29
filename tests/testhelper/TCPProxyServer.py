@@ -17,7 +17,7 @@ from testhelper.ThreadedEchoServer import EchoServer
 from tcp_proxyserver import ProxyConnections, TCPProxyServer
 from _exceptions import *
 from _proxyDS import StreamInterceptor, Buffer
-from _testResources import PTTestResources
+from testhelper.TestResources import PTTestResources
 
 
 class TPSTestResources:

@@ -18,7 +18,7 @@ import math
 
 from testhelper.TCPProxyServer import TPSTestResources
 from testhelper.DataTransferSimulator import DataTransferSimulator
-from _testResources import PTTestResources
+from tests.testhelper.TestResources import PTTestResources
 
 
 sys.path.insert(0, os.path.join("..", "src"))
