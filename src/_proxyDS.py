@@ -13,11 +13,13 @@ proxyHandlerDescriptor = NamedTuple("ProxyHandlerData", [("PROXY_HOST", str), ("
 ## NOTE: This should be performed on a per protocol basis!!!
 class StreamInterceptor:
     ## NOTE: This needs to rewrite any requests to the real server
-    def clientToServerHook(self, requestChunk: bytes, buffer: "Buffer") -> None:
+    @staticmethod
+    def clientToServerHook(buffer: "Buffer", requestChunk: bytes) -> None:
         raise NotImplementedError
 
     ## NOTE: This needs to rewrite any responses back to the client
-    def serverToClientHook(self, responseChunk: bytes, buffer: "Buffer") -> None:
+    @staticmethod
+    def serverToClientHook(buffer: "Buffer", responseChunk: bytes) -> None:
         raise NotImplementedError
 
 
@@ -42,6 +44,7 @@ class StreamInterceptor:
 class Buffer:
     REQUEST_DELIMITERS: List[bytes] = field(init=True)
     _data: bytearray = field(init=False, default_factory=bytearray)
+    _prevEndBuffer: bytearray = field(init=False, default_factory=bytearray)
     _requests: deque = field(init=False, default_factory=deque)
     _MAX_BUFFER_SIZE: int = 1024 * 128 ## 128Kb
 
@@ -102,7 +105,8 @@ class Buffer:
         a request is completely parsed from the request queue 
         `buffer()._requests`"""
         ## TODO: Find a better way to bind the hook function to this self obj instance
-        self._requestHook = functools.partial(hook, self)
+        # self._requestHook = functools.partial(hook, self)
+        # self._requestHook = hook
         
 
     ############## Request Queue Operations ########################
@@ -148,19 +152,10 @@ class Buffer:
     def _execRequestParsing(self, chunk: bytearray) -> None:
         """This is a hook that executes whenever a new chunk has 
         been received"""
-        ## BUG: There is still an opportunity for a race condition if `buffer.pop`
-        ## is called concurrently with the `buffer.write()` method
-        ## ==> This needs to be resolved
-        
         ## NOTE: In here, we are able to split up the streams/chunks into requests
 
-        ## If a delimeter is greater than size 1, then it is possible that it is spread over
-        ## multiple chunks (so we need to check this by adding bytes from previous chunks)
-        offset = 0
-
-        if self.MAX_DELIMETER_LENGTH > 1:
-            offset = len(self._data[-(self.MAX_DELIMETER_LENGTH+len(chunk)):-len(chunk)])
-            chunk = self._data[-(offset+len(chunk)):-len(chunk)] + chunk
+        offset = len(self._prevEndBuffer)
+        chunk = self._prevEndBuffer + chunk
 
         ## NOTE: Great potential for optimization here
         ## --> This only works if the list of strings are ordred
@@ -169,9 +164,7 @@ class Buffer:
         ## --> e.g. overlapping strings potentially:??
         ## TODO: Re-evaluate the search mechanism for correctness
         delimiters = [m.end() for m in re.finditer(self.REQUEST_DELIMETER_REGEX, chunk)]
-        # print(delimiters)
-        # if delimiters != []:
-        #     print(chunk[delimiters[0] + offset])
+
         ## If multiple delimeters were found in the chunk, then
         ## -- only the first request can be over multiple chunks
         ## -- the rest that have delimeters are not spread over multiple chunks
@@ -195,7 +188,11 @@ class Buffer:
         ## If there is any remaining piece of the chunk that isn't delimited
         if (len(chunk) - leftIndex) > 0:
             self.pushToQueue(chunk[leftIndex:], False)
-
+            ## We then need to update the buffer (if the chunk is NOT complete (i.e. not delimited))
+            ## NOTE: The buffer max size is MAX_DELIMITER_LEN - 1
+            self._prevEndBuffer = chunk[max(len(chunk) - self.MAX_DELIMETER_LENGTH + 1, 0) :len(chunk)]
+        else:
+            self._prevEndBuffer = bytearray()
 
         ## At this point we must have SOMETHING in the queue
         ## All elements below the top have been delimited, so we can pass it to the requestHook
