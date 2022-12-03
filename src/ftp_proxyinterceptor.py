@@ -3,10 +3,10 @@ import logging
 import collections
 from typing import Optional, Tuple
 
-from _proxyDS import ProxyInterceptor, Buffer
+from _proxyDS import StreamInterceptor, Buffer
 
 
-class FTPProxyInterceptor(ProxyInterceptor):
+class FTPProxyInterceptor(StreamInterceptor):
     def __init__(self) -> None:
         super().__init__()
 
@@ -298,16 +298,15 @@ class FTPProxyInterceptor(ProxyInterceptor):
         return entities[1]
 
 
-    def _getResponseCode(self, request: str) -> Optional[int]:
+    def _getResponseCode(self, response: str) -> Optional[int]:
         ## All reply codes have a length of 3
         ## Reply code xyz
         ## 1 <= x <= 5
         ## 0 <= y <= 5
         ## 0 <= z <= 9 ## not specified on FRC and servers may provide custom replies so we take up the whole range 0-9
-        ret = re.search('^\s*([1-5][0-5][0-9])', request)
-        if ret is None:
-            return None
-        return int(ret.groups(0))
+        ## NOTE: Multiline replies may do \d\d\d-firstline ... instead of \d\d\d only line (space vs hyphen)
+        ret = re.search('^([1-5][0-5][0-9])[ -]', response)
+        return int(ret.groups()[0])
 
 
 
