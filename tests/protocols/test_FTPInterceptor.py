@@ -27,6 +27,30 @@ class FTPProxyTestResources:
         return TestFTPProxyInterceptor()
 
 
+    @classmethod
+    def createUnabstractedFTPLoginInterceptor(cls):
+        class TestFTPLoginProxyInterceptor(FTPLoginProxyInterceptor):
+            def __init__(self) -> None:
+                super().__init__()
+                self.calledExecuteSuccessHook = False
+                self.successUsername = None
+                self.successPassword = None
+                self.successAccount = None
+
+            def _createStateGenerator(self) -> typing.Generator:
+                yield
+                return
+
+            def _executeSuccessHook(self, username: str = None, password: str = None, account: str = None) -> None:
+                self.calledExecuteSuccessHook = True
+                self.successUsername = username
+                self.successPassword = password
+                self.successAccount = account
+                return
+
+        return TestFTPLoginProxyInterceptor()
+    
+
 ## TODO: Need to restructure the class tests to handle the new
 ## class hierarchy that I have created to reorganize the code
 ## for the proxyInterceptor
@@ -132,3 +156,123 @@ class Test_FTPProxyInterceptors_Helpers:
         assert "Cannot only pass a request OR response" in str(excInfo.value)
 
 
+
+class Test_FTPLoginProxyInterceptor_Helpers:
+
+    ## Tests for _getUsername(...)
+    def test_getUsername_correctFormat_Delimiter1(self):
+        pi = FTPLoginProxyInterceptor()
+        req = "USER user5423\r\n"
+        assert pi._getUsername(req) == "user5423"
+
+    def test_getUsername_correctFormat_Delimiter2(self):
+        pi = FTPLoginProxyInterceptor()
+        req = "USER user5423\r"
+        assert pi._getUsername(req) == "user5423"
+
+    def test_getUsername_noUserArg(self):
+        pi = FTPLoginProxyInterceptor()
+        req = "USER\r\n"
+        with pytest.raises(Exception) as excInfo:
+            pi._getUsername(req)
+
+    def test_getUsername_multipleArgs(self):
+        pi = FTPLoginProxyInterceptor()
+        req = "USER user5423 user1337\r\n"
+        with pytest.raises(Exception) as excInfo:
+            pi._getUsername(req)
+
+    def test_getUsername_falseStart(self):
+        pi = FTPLoginProxyInterceptor()
+        req = " USER user5423\r\n"
+        with pytest.raises(Exception) as excInfo:
+            pi._getUsername(req)
+
+
+    ## Tests for _getPassword(...)
+    def test_getPassword_correctFormat_Delimiter1(self):
+        pi = FTPLoginProxyInterceptor()
+        req = "PASS password\r\n"
+        assert pi._getPassword(req) == "password"
+
+    def test_getPassword_correctFormat_Delimiter2(self):
+        pi = FTPLoginProxyInterceptor()
+        req = "PASS password\r"
+        assert pi._getPassword(req) == "password"
+
+    def test_getPassword_noUserArg(self):
+        pi = FTPLoginProxyInterceptor()
+        req = "PASS\r\n"
+        with pytest.raises(Exception) as excInfo:
+            pi._getPassword(req)
+
+    def test_getPassword_multipleArgs(self):
+        pi = FTPLoginProxyInterceptor()
+        req = "PASS password1 password2\r\n"
+        with pytest.raises(Exception) as excInfo:
+            pi._getPassword(req)
+
+    def test_getPassword_falseStart(self):
+        pi = FTPLoginProxyInterceptor()
+        req = " PASS password\r\n"
+        with pytest.raises(Exception) as excInfo:
+            pi._getPassword(req)
+
+
+    ## Tests for _getAccount(...)
+    def test_getAccount_correctFormat_Delimiter1(self):
+        pi = FTPLoginProxyInterceptor()
+        req = "ACCT account\r\n"
+        assert pi._getAccount(req) == "account"
+
+    def test_getAccount_correctFormat_Delimiter2(self):
+        pi = FTPLoginProxyInterceptor()
+        req = "ACCT account\r"
+        assert pi._getAccount(req) == "account"
+
+    def test_getAccount_noUserArg(self):
+        pi = FTPLoginProxyInterceptor()
+        req = "ACCT\r\n"
+        with pytest.raises(Exception) as excInfo:
+            pi._getAccount(req)
+
+    def test_getAccount_multipleArgs(self):
+        pi = FTPLoginProxyInterceptor()
+        req = "ACCT account1 account2\r\n"
+        with pytest.raises(Exception) as excInfo:
+            pi._getAccount(req)
+
+    def test_getAccount_falseStart(self):
+        pi = FTPLoginProxyInterceptor()
+        req = " ACCT account\r\n"
+        with pytest.raises(Exception) as excInfo:
+            pi._getAccount(req)
+
+
+    ## Testing _isUserRequest
+    def test_isUserRequest_correctCommand_Delimiter1(self):
+        pi = FTPLoginProxyInterceptor()
+        req = "USER username\r\n"
+        assert pi._isUSERRequest(req) is True
+    
+    def test_isUserRequest_correctCommand_Delimiter2(self):
+        pi = FTPLoginProxyInterceptor()
+        req = "USER username\r"
+        assert pi._isUSERRequest(req) is True
+    
+    def test_isUserRequest_noUserArg(self):
+        pi = FTPLoginProxyInterceptor()
+        req = "USER\r\n"
+        assert pi._isUSERRequest(req) is False
+
+    def test_isUserRequest_multipleArgs(self):
+        pi = FTPLoginProxyInterceptor()
+        req = "USER user5423 user1337\r\n"
+        assert pi._isUSERRequest(req) is False
+
+    def test_isUserRequest_falseStart(self):
+        pi = FTPLoginProxyInterceptor()
+        req = " USER user5423\r\n"
+        assert pi._isUSERRequest(req) is False
+
+    
