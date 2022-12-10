@@ -326,3 +326,254 @@ class Test_FTPProxyInterceptor_Init:
 
         ## Finally, we check if the generator exists to track ftp comms
         assert isinstance(fpi._stateGenerator, typing.Generator)
+
+
+
+class Test_FTPLoginProxyInterceptor_Helpers:
+    ## TODO: Need to check whether _successExecHook is called!!!
+
+    ## NOTE: View RFC 959 - Page 57 for the state diagrams for the Login sequence
+    def _setupParseUSERtests(self, request, response):
+        messages = {}
+        messages["USERrequest"] = request
+        messages["USERresponse"] = response
+        fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
+        return fpi, messages
+
+    def _setupParsePASStests(self, request, response):
+        messages = {}
+        username = "user5423"
+        messages["USERrequest"] = f"USER {username}\r\n"
+        messages["USERresponse"] = ...
+        messages["PASSrequest"] = request
+        messages["PASSresponse"] = response
+        fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
+        return fpi, messages, username
+
+    def _setupParseACCTtests(self, request, response):
+        messages = {}
+        username = "user5423"
+        password = "password123"
+        messages["USERrequest"] = f"USER {username}\r\n"
+        messages["USERresponse"] = ...
+        messages["PASSrequest"] = f"PASS {password}\r\n"
+        messages["PASSresponse"] = ...
+        messages["ACCTrequest"] = request
+        messages["ACCTresponse"] = response
+        fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
+        return fpi, messages, username, password
+
+    ## NOTE: I'm not creating any extensive tests for logging as this should be
+    ## overhauled in the future, by using field specific logging (more easy to search)
+    def _assertSingleExceptionLog(self, returnType: str, command: str, request, response, caplog):
+        assert len(caplog.records) == 1
+        msg = list(caplog.records)[0].msg
+        assert returnType in msg
+        assert command in msg
+        assert repr(request) in msg
+        assert repr(response) in msg
+
+    def _assertSingleSuccessLog(self, command: str, caplog, *args):
+        assert len(caplog.records) == 1
+        msg = list(caplog.records)[0].msg
+        assert "SUCCESS" in msg
+        assert command in msg
+        for arg in args:
+            assert arg in msg
+
+    def _assertNoLogs(self, caplog):
+        assert len(caplog.records) == 0
+
+
+    def test_parseUSERrequest_1xx(self, caplog):
+        ## "Error"
+        request = "USER user5423\r\n"
+        response = "150 File status okay; about to open data connection.\r\n"
+        fpi, messages = self._setupParseUSERtests(request, response)
+
+        completeReq, username = fpi._parseUSERrequest(request, response, messages)
+        assert completeReq is True
+        assert username is None
+        assert fpi.calledExecuteSuccessHook is False
+        self._assertSingleExceptionLog("ERROR", "USER", request, response, caplog)
+
+    def test_parseUSERrequest_2xx(self, caplog):
+        ## "Success"
+        testUsername = "user5423"
+        request = f"USER {testUsername}\r\n"
+        response = "200 Command ok.\r\n"
+        fpi, messages = self._setupParseUSERtests(request, response)
+
+        completeReq, username = fpi._parseUSERrequest(request, response, messages)
+        assert completeReq is True
+        assert username == testUsername
+        assert fpi.calledExecuteSuccessHook is True
+        assert fpi.successUsername == testUsername
+        assert fpi.successPassword is None and fpi.successAccount is None
+        self._assertSingleSuccessLog("USER", caplog, username)
+
+    def test_parseUSERrequest_3xx(self, caplog):
+        ## "Incomplete" - waiting for more (i.e. password)
+        testUsername = "user5423"
+        request = f"USER {testUsername}\r\n"
+        response = "331 Please specify the password.\r\n"
+        fpi, messages = self._setupParseUSERtests(request, response)
+
+        completeReq, username = fpi._parseUSERrequest(request, response, messages)
+        assert completeReq is False
+        assert username == testUsername
+        assert fpi.calledExecuteSuccessHook is False
+        self._assertNoLogs(caplog)
+
+    def test_parseUSERrequest_4xx(self, caplog):
+        ## "Failure"
+        request = "USER user5423\r\n"
+        response = "451 Requested action aborted: local error in processing.\r\n"
+        fpi, messages = self._setupParseUSERtests(request, response)
+
+        completeReq, username = fpi._parseUSERrequest(request, response, messages)
+        assert completeReq is True
+        assert username is None
+        assert fpi.calledExecuteSuccessHook is False
+        self._assertSingleExceptionLog("FAILURE", "USER", request, response, caplog)
+
+    def test_parseUSERrequest_5xx(self, caplog):
+        ## "Failure"
+        request = "USER user5423\r\n"
+        response = "502 Command not implemented\r\n"
+        fpi, messages = self._setupParseUSERtests(request, response)
+
+        completeReq, username = fpi._parseUSERrequest(request, response, messages)
+        assert completeReq is True
+        assert username is None
+        assert fpi.calledExecuteSuccessHook is False
+        self._assertSingleExceptionLog("FAILURE", "USER", request, response, caplog)
+    
+    
+
+    def test_parsePASSrequest_1xx(self, caplog):
+        ## "Error"
+        request = "PASS password\r\n"
+        response = "150 File status okay; about to open data connection.\r\n"
+        fpi, messages, username = self._setupParsePASStests(request, response)
+
+        completeReq, password = fpi._parsePASSrequest(request, response, messages, username)
+        assert completeReq is True
+        assert password is None
+        assert fpi.calledExecuteSuccessHook is False
+        self._assertSingleExceptionLog("ERROR", "PASS", request, response, caplog)
+
+    def test_parsePASSrequest_2xx(self, caplog):
+        ## "Success"
+        testPassword = "password"
+        request = f"PASS {testPassword}\r\n"
+        response = "230 Login successful.\r\n"
+        fpi, messages, username = self._setupParsePASStests(request, response)
+
+        completeReq, password = fpi._parsePASSrequest(request, response, messages, username)
+        assert completeReq is True
+        assert password == testPassword
+        assert fpi.calledExecuteSuccessHook is True
+        assert fpi.successUsername == username and fpi.successPassword == testPassword
+        assert fpi.successAccount is None
+        self._assertSingleSuccessLog("PASS", caplog, username, testPassword)
+
+    def test_parsePASSrequest_3xx(self, caplog):
+        ## "Incomplete"
+        testPassword = "password"
+        request = f"PASS {testPassword}\r\n"
+        response = "331 Please specify the account.\r\n"
+        fpi, messages, username = self._setupParsePASStests(request, response)
+
+        completeReq, password = fpi._parsePASSrequest(request, response, messages, username)
+        assert completeReq is False
+        assert password == testPassword
+        assert fpi.calledExecuteSuccessHook is False
+        self._assertNoLogs(caplog)
+
+    def test_parsePASSrequest_4xx(self, caplog):
+        ## "Failure"
+        request = "PASS password\r\n"
+        response = "451 Requested action aborted: local error in processing.\r\n"
+        fpi, messages, username = self._setupParsePASStests(request, response)
+
+        completeReq, password = fpi._parsePASSrequest(request, response, messages, username)
+        assert completeReq is True
+        assert password is None
+        assert fpi.calledExecuteSuccessHook is False
+        self._assertSingleExceptionLog("FAILURE", "PASS", request, response, caplog)
+
+    def test_parsePASSrequest_5xx(self, caplog):
+        ## "Failure"
+        request = "PASS password\r\n"
+        response = "502 Command not implemented\r\n"
+        fpi, messages, username = self._setupParsePASStests(request, response)
+
+        completeReq, password = fpi._parsePASSrequest(request, response, messages, username)
+        assert completeReq is True
+        assert password is None
+        assert fpi.calledExecuteSuccessHook is False
+        self._assertSingleExceptionLog("FAILURE", "PASS", request, response, caplog)
+
+    def test_parseACCTrequest_1xx(self, caplog):
+        ## "Error"
+        request = "ACCT account\r\n"
+        response = "150 File status okay; about to open data connection.\r\n"
+        fpi, messages, username, password = self._setupParseACCTtests(request, response)
+
+        completeReq, account = fpi._parseACCTrequest(request, response, messages, username, password)
+        assert completeReq is True
+        assert account is None
+        assert fpi.calledExecuteSuccessHook is False
+        self._assertSingleExceptionLog("ERROR", "ACCT", request, response, caplog)
+
+    def test_parseACCTrequest_2xx(self, caplog):
+        ## "Success"
+        testAccount = "account"
+        request = f"ACCT {testAccount}\r\n"
+        response = "230 Login successful.\r\n"
+        fpi, messages, username, password = self._setupParseACCTtests(request, response)
+
+        completeReq, account = fpi._parseACCTrequest(request, response, messages, username, password)
+        assert completeReq is True
+        assert account == testAccount
+        assert fpi.calledExecuteSuccessHook is True
+        assert fpi.successUsername == username and fpi.successPassword == password and fpi.successAccount == testAccount
+        self._assertSingleSuccessLog("ACCT", caplog, username, password, testAccount)
+
+    def test_parseACCTrequest_3xx(self, caplog):
+        ## "Error" -- Cannot have a incomplete req here (at end of login sequence!!)
+        request = "ACCT account"
+        response = "331 Please specify the account.\r\n" ## ERROR!!!
+        fpi, messages, username, password = self._setupParseACCTtests(request, response)
+
+        completeReq, account = fpi._parseACCTrequest(request, response, messages, username, password)
+        assert completeReq is True ## 3xx is true here (as the incomplete req is an Error)
+        assert account is None
+        assert fpi.calledExecuteSuccessHook is False
+        self._assertSingleExceptionLog("ERROR", "ACCT", request, response, caplog)
+
+    def test_parseACCTrequest_4xx(self, caplog):
+        ## "Failure"
+        request = "ACCT account\r\n"
+        response = "451 Requested action aborted: local error in processing.\r\n"
+        fpi, messages, username, password = self._setupParseACCTtests(request, response)
+
+        completeReq, account = fpi._parseACCTrequest(request, response, messages, username, password)
+        assert completeReq is True
+        assert account is None
+        assert fpi.calledExecuteSuccessHook is False
+        self._assertSingleExceptionLog("FAILURE", "PASS", request, response, caplog)
+
+    def test_parseACCTrequest_5xx(self, caplog):
+        ## "Failure"
+        request = "ACCT account\r\n"
+        response = "502 Command not implemented\r\n"
+        fpi, messages, username, password = self._setupParseACCTtests(request, response)
+
+        completeReq, account = fpi._parseACCTrequest(request, response, messages, username, password)
+        assert completeReq is True
+        assert account is None
+        assert fpi.calledExecuteSuccessHook is False
+        self._assertSingleExceptionLog("FAILURE", "PASS", request, response, caplog)
+
