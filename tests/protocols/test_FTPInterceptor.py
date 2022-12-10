@@ -276,3 +276,53 @@ class Test_FTPLoginProxyInterceptor_Helpers:
         assert pi._isUSERRequest(req) is False
 
     
+
+class Test_FTPProxyInterceptor_Init:
+    def test_init(self):
+        ## We check if there is only a default initializer
+        initSig = inspect.signature(FTPProxyInterceptor.__init__)
+        assert len(initSig.parameters) == 1 and bool(initSig.parameters["self"])
+
+
+        ## We create a subclass to test (since we need to fill in the
+        ## abstract methods from the parent class)
+        class subclassFTPProxyInterceptor(FTPProxyInterceptor):
+            def _createStateGenerator(self) -> typing.Generator:
+                yield
+                return
+
+            def _executeSuccessHook(self) -> None:
+                raise NotImplementedError()
+
+        ## We check if the proxy interceptor has a request
+        ## and response queue
+        fpi = subclassFTPProxyInterceptor()
+        assert isinstance(fpi._requestQueue, collections.deque)
+        assert len(fpi._requestQueue) == 0
+        assert isinstance(fpi._responseQueue, collections.deque)
+        assert len(fpi._requestQueue) == 0
+
+        ## We 
+        hookSig = inspect.signature(FTPProxyInterceptor.clientToServerRequestHook)
+        assert len(hookSig.parameters) == 2
+        assert "self" in hookSig.parameters
+        assert "buffer" in hookSig.parameters
+
+        hookSig = inspect.signature(FTPProxyInterceptor.serverToClientRequestHook)
+        assert len(hookSig.parameters) == 2
+        assert "self" in hookSig.parameters
+        assert "buffer" in hookSig.parameters
+
+        ## We check if the ftp hook exists
+        msgHookSig = inspect.signature(FTPProxyInterceptor.ftpMessageHook)
+        assert len(msgHookSig.parameters) == 3
+        assert "self" in msgHookSig.parameters
+        assert "request" in msgHookSig.parameters
+        assert "response" in msgHookSig.parameters
+
+        ## We also need to check if the ftp success hook exists
+        with pytest.raises(NotImplementedError) as excInfo:
+            fpi._executeSuccessHook() ## *args, **kwargs
+
+        ## Finally, we check if the generator exists to track ftp comms
+        assert isinstance(fpi._stateGenerator, typing.Generator)
