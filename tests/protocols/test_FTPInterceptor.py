@@ -580,3 +580,245 @@ class Test_FTPLoginProxyInterceptor_Helpers:
         assert fpi.calledExecuteSuccessHook is False
         FTPProxyTestResources._assertSingleExceptionLog("FAILURE", "ACCT", request, response, caplog)
 
+
+class Test_FTPLoginProxyInterceptor_Init:
+    ## TODO: We need to create additional tests to check that this subclass
+    ## is created correctly
+    def test_init(self): raise NotImplementedError()
+
+class Test_FTPLoginProxyInterceptor:
+    def _simulateCommSequence(self, sequence, fpi):
+        isClientSender = True
+        for message in sequence:
+            if isClientSender:
+                fpi.ftpMessageHook(request=message)
+            else:
+                fpi.ftpMessageHook(response=message)
+            isClientSender = not isClientSender
+
+    def test_ftpMessageHook_USER_1xx(self, caplog):
+        sequence = [
+            "USER user5423\r\n",
+            "150 File status okay; about to open data connection.\r\n"
+        ]
+
+        fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
+        self._simulateCommSequence(sequence, fpi)
+        assert fpi.calledExecuteSuccessHook is False
+        FTPProxyTestResources._assertSingleExceptionLog("ERROR", "USER", sequence[-2], sequence[-1], caplog)
+
+    def test_ftpMessageHook_USER_2xx(self, caplog):
+        username = "user5423"
+        sequence = [
+            f"USER {username}\r\n",
+            "230 User logged in, proceed.\r\n"
+        ]
+
+        fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
+        self._simulateCommSequence(sequence, fpi)
+        assert fpi.calledExecuteSuccessHook is True
+        FTPProxyTestResources._assertSingleSuccessLog("USER", caplog, username)
+
+    def test_ftpMessageHook_USER_3xx(self, caplog):
+        sequence = [
+            "USER user5423\r\n",
+            "331 Please specify the password.\r\n"
+        ]     
+
+        fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
+        self._simulateCommSequence(sequence, fpi)
+        assert fpi.calledExecuteSuccessHook is False
+        FTPProxyTestResources._assertNoLogs(caplog)
+
+    def test_ftpMessageHook_USER_4xx(self, caplog):
+        sequence = [
+            "USER user5423\r\n",
+            "451 Requested action aborted: local error in processing.\r\n"
+        ]
+
+        fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
+        self._simulateCommSequence(sequence, fpi)
+        assert fpi.calledExecuteSuccessHook is False
+        FTPProxyTestResources._assertSingleExceptionLog("FAILURE", "USER", sequence[-2], sequence[-1], caplog)
+
+    def test_ftpMessageHook_USER_5xx(self, caplog):
+        sequence = [
+            "USER user5423\r\n",
+            "502 Command not implemented\r\n"
+        ]
+
+        fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
+        self._simulateCommSequence(sequence, fpi)
+        assert fpi.calledExecuteSuccessHook is False
+        FTPProxyTestResources._assertSingleExceptionLog("FAILURE", "USER", sequence[-2], sequence[-1], caplog)
+
+    def test_ftpMessageHook_PASS_1xx(self, caplog):
+        username = "user5423"
+        sequence = [
+            f"USER {username}\r\n",
+            "331 Please specify the password.\r\n",
+            "PASS password\r\n",
+            "150 File status okay; about to open data connection.\r\n"
+        ]
+
+        fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
+        self._simulateCommSequence(sequence, fpi)
+        assert fpi.calledExecuteSuccessHook is False
+        FTPProxyTestResources._assertSingleExceptionLog("ERROR", "PASS", sequence[-2], sequence[-1], caplog)
+
+    def test_ftpMessageHook_PASS_2xx(self, caplog):
+        username = "user5423"
+        password = "password"
+        sequence = [
+            f"USER {username}\r\n",
+            "331 Please specify the password.\r\n",
+            f"PASS {password}\r\n",
+            "230 Login successful.\r\n"
+        ]
+
+        fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
+        self._simulateCommSequence(sequence, fpi)
+        assert fpi.calledExecuteSuccessHook is True
+        FTPProxyTestResources._assertSingleSuccessLog("PASS", caplog, username, password)
+
+    def test_ftpMessageHook_PASS_3xx(self, caplog):
+        username = "user5423"
+        sequence = [
+            f"USER {username}\r\n",
+            "331 Please specify the password.\r\n",
+            "PASS password\r\n",
+            "331 Please specify the account.\r\n"
+        ]
+
+        fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
+        self._simulateCommSequence(sequence, fpi)
+        assert fpi.calledExecuteSuccessHook is False
+        FTPProxyTestResources._assertNoLogs(caplog)
+
+    def test_ftpMessageHook_PASS_4xx(self, caplog):
+        username = "user5423"
+        sequence = [
+            f"USER {username}\r\n",
+            "331 Please specify the password.\r\n",
+            "PASS password\r\n",
+            "451 Requested action aborted: local error in processing.\r\n"
+        ]
+
+        fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
+        self._simulateCommSequence(sequence, fpi)
+        assert fpi.calledExecuteSuccessHook is False
+        FTPProxyTestResources._assertSingleExceptionLog("FAILURE", "PASS", sequence[-2], sequence[-1], caplog)
+
+    def test_ftpMessageHook_PASS_5xx(self, caplog):
+        username = "user5423"
+        sequence = [
+            f"USER {username}\r\n",
+            "331 Please specify the password.\r\n",
+            "PASS password\r\n",
+            "502 Command not implemented\r\n"
+        ]
+
+        fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
+        self._simulateCommSequence(sequence, fpi)
+        assert fpi.calledExecuteSuccessHook is False
+        FTPProxyTestResources._assertSingleExceptionLog("FAILURE", "PASS", sequence[-2], sequence[-1], caplog)
+
+    def test_ftpMessageHook_ACCT_1xx(self, caplog):
+        username = "user5423"
+        password = "password"
+        sequence = [
+            f"USER {username}\r\n",
+            "331 Please specify the password.\r\n",
+            f"PASS {password}\r\n",
+            "331 Please specify the account.\r\n",
+            "ACCT account\r\n",
+            "150 File status okay; about to open data connection.\r\n"
+        ]
+
+        fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
+        self._simulateCommSequence(sequence, fpi)
+        assert fpi.calledExecuteSuccessHook is False
+        FTPProxyTestResources._assertSingleExceptionLog("ERROR", "ACCT", sequence[-2], sequence[-1], caplog)
+
+    def test_ftpMessageHook_ACCT_2xx(self, caplog):
+        username = "user5423"
+        password = "password"
+        account = "account"
+        sequence = [
+            f"USER {username}\r\n",
+            "331 Please specify the password.\r\n",
+            f"PASS {password}\r\n",
+            "331 Please specify the account.\r\n",
+            f"ACCT {account}\r\n",
+            "230 Login successful.\r\n"
+        ]
+
+        fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
+        self._simulateCommSequence(sequence, fpi)
+        assert fpi.calledExecuteSuccessHook is True
+        FTPProxyTestResources._assertSingleSuccessLog("ACCT", caplog, username, password, account)
+
+    def test_ftpMessageHook_ACCT_3xx(self, caplog):
+        username = "user5423"
+        password = "password"
+        sequence = [
+            f"USER {username}\r\n",
+            "331 Please specify the password.\r\n",
+            f"PASS {password}\r\n",
+            "331 Please specify the account.\r\n",
+            "ACCT account\r\n",
+            "331 Please specify the account.\r\n" ## ERROR!!!
+        ]
+
+        fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
+        self._simulateCommSequence(sequence, fpi)
+        assert fpi.calledExecuteSuccessHook is False
+        FTPProxyTestResources._assertSingleExceptionLog("ERROR", "ACCT", sequence[-2], sequence[-1], caplog)
+
+    def test_ftpMessageHook_ACCT_4xx(self, caplog):
+        username = "user5423"
+        password = "password"
+        sequence = [
+            f"USER {username}\r\n",
+            "331 Please specify the password.\r\n",
+            f"PASS {password}\r\n",
+            "331 Please specify the account.\r\n",
+            "ACCT account\r\n",
+            "451 Requested action aborted: local error in processing.\r\n"
+        ]
+
+        fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
+        self._simulateCommSequence(sequence, fpi)
+        assert fpi.calledExecuteSuccessHook is False
+        FTPProxyTestResources._assertSingleExceptionLog("FAILURE", "ACCT", sequence[-2], sequence[-1], caplog)
+
+    def test_ftpMessageHook_ACCT_5xx(self, caplog):
+        username = "user5423"
+        password = "password"
+        sequence = [
+            f"USER {username}\r\n",
+            "331 Please specify the password.\r\n",
+            f"PASS {password}\r\n",
+            "331 Please specify the account.\r\n",
+            "ACCT account\r\n",
+            "502 Command not implemented\r\n"
+        ]
+
+        fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
+        self._simulateCommSequence(sequence, fpi)
+        assert fpi.calledExecuteSuccessHook is False
+        FTPProxyTestResources._assertSingleExceptionLog("FAILURE", "ACCT", sequence[-2], sequence[-1], caplog)
+
+
+    def test_ftpMessageHook_nonLoginCommands(self): raise NotImplementedError
+
+    def test_ftpMessageHook_relogin_USER(self): raise NotImplementedError()
+    def test_ftpMessageHook_relogin_PASS(self): raise NotImplementedError()
+    def test_ftpMessageHook_relogin_ACCT(self): raise NotImplementedError()
+
+    def test_ftpMessageHook_doubleLogin_USER(self): raise NotImplementedError()
+    def test_ftpMessageHook_doubleLogin_PASS(self): raise NotImplementedError()
+    def test_ftpMessageHook_doubleLogin_ACCT(self): raise NotImplementedError()
+
+    def test_clientToServerHook(self): raise NotImplementedError()
+    def test_serverToProxyHook(self): raise NotImplementedError()
