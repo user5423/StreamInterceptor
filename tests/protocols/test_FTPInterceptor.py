@@ -13,6 +13,9 @@ sys.path.insert(0, os.path.join("..", "..", "src"))
 from ftp_proxyinterceptor import FTPProxyInterceptor, FTPLoginProxyInterceptor
 
 
+
+## NOTE: caplog is a pytest fixture for capturing logs
+
 class FTPProxyTestResources:
     @classmethod
     def createUnabstractedFTPInterceptor(cls):
@@ -84,6 +87,10 @@ class FTPProxyTestResources:
         fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
         return fpi, messages, username, password
 
+
+    ## TODO: Generalize the below into a larger function that can test by deriving expected behavior from the control and data sequences
+
+
     ## NOTE: I'm not creating any extensive tests for logging as this should be
     ## overhauled in the future, by using field specific logging (more easy to search)
     @classmethod
@@ -99,6 +106,16 @@ class FTPProxyTestResources:
     def _assertSingleSuccessLog(cls, command: str, caplog, *args):
         assert len(caplog.records) == 1
         msg = list(caplog.records)[0].msg
+        assert "SUCCESS" in msg
+        assert f"@ftp.cmds.{command}" in msg
+        for arg in args:
+            assert arg in msg
+
+    ## TODO: Consider modifying the below code so that it actually tests multiple messages
+    @classmethod
+    def _assertDoubleSuccessLog(cls, command: str, caplog, *args):
+        assert len(caplog.records) == 2
+        msg = list(caplog.records)[-1].msg
         assert "SUCCESS" in msg
         assert f"@ftp.cmds.{command}" in msg
         for arg in args:
@@ -809,16 +826,92 @@ class Test_FTPLoginProxyInterceptor:
         assert fpi.calledExecuteSuccessHook is False
         FTPProxyTestResources._assertSingleExceptionLog("FAILURE", "ACCT", sequence[-2], sequence[-1], caplog)
 
+    ## NOTE: The behavior observed on vsftpd version 3.0.3 is that if you try to login into a session
+    ## as the user in the current session, then you can write incorrect PASS (and likely ACCT)
+    ## and the client will be in a user session (idk if it the session is restarted or maintained)
 
-    def test_ftpMessageHook_nonLoginCommands(self): raise NotImplementedError
 
-    def test_ftpMessageHook_relogin_USER(self): raise NotImplementedError()
-    def test_ftpMessageHook_relogin_PASS(self): raise NotImplementedError()
-    def test_ftpMessageHook_relogin_ACCT(self): raise NotImplementedError()
+    def test_ftpMessageHook_doubleLogin_USER(self, caplog):
+        username = "user5423"
+        password = "password"
+        account = "account"
+        sequence = [
+            f"USER {username}\r\n",
+            "331 Please specify the password.\r\n",
+            f"PASS {password}\r\n",
+            "230 Login successful.\r\n",
+            f"USER {username}\r\n",
+            "230 Already logged in.\r\n"
+        ]
+        
+        fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
+        self._simulateCommSequence(sequence, fpi)
+        assert fpi.calledExecuteSuccessHook is True
+        FTPProxyTestResources._assertDoubleSuccessLog("USER", caplog, username)
 
-    def test_ftpMessageHook_doubleLogin_USER(self): raise NotImplementedError()
-    def test_ftpMessageHook_doubleLogin_PASS(self): raise NotImplementedError()
-    def test_ftpMessageHook_doubleLogin_ACCT(self): raise NotImplementedError()
+    def test_ftpMessageHook_doubleLogin_PASS(self, caplog):
+        username = "user5423"
+        password = "password"
+        secondPassword = "RANDOM_PASSWORD"
+        sequence = [
+            f"USER {username}\r\n",
+            "331 Please specify the password.\r\n",
+            f"PASS {password}\r\n",
+            "230 Login successful.\r\n",
+            f"USER {username}\r\n",
+            "331 Any password will do.\r\n",
+            f"PASS {secondPassword}\r\n",
+            "230 Already logged in.\r\n"
+        ]
 
-    def test_clientToServerHook(self): raise NotImplementedError()
-    def test_serverToProxyHook(self): raise NotImplementedError()
+        fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
+        self._simulateCommSequence(sequence, fpi)
+        assert fpi.calledExecuteSuccessHook is True
+        FTPProxyTestResources._assertDoubleSuccessLog("PASS", caplog, username, secondPassword)
+
+    def test_ftpMessageHook_doubleLogin_ACCT(self, caplog):
+        username = "user5423"
+        password = "password"
+        secondPassword = "RANDOM_PASSWORD"
+        secondAccount = "RANDOM_ACCOUNT"
+        sequence = [
+            f"USER {username}\r\n",
+            "331 Please specify the password.\r\n",
+            f"PASS {password}\r\n",
+            "230 Login successful.\r\n",
+            f"USER {username}\r\n",
+            "331 Any password will do.\r\n",
+            f"PASS {secondPassword}\r\n",
+            "331 Any account will do.\r\n",
+            f"ACCT {secondAccount}\r\n",
+            "230 Already logged in.\r\n"
+        ]
+
+        fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
+        self._simulateCommSequence(sequence, fpi)
+        assert fpi.calledExecuteSuccessHook is True
+        FTPProxyTestResources._assertDoubleSuccessLog("ACCT", caplog, username, secondPassword, secondAccount)
+
+
+    def test_ftpMessageHook_relogin_USER(self, caplog): 
+        ## NOTE: I think that the FTP does not support a client maintaining a session 
+        ## with the FTP server while logging into a different account. The only options
+        ## I've found is to 'QUIT' = 'BYE' which disconnects the client's connection to
+        ## server
+
+        ## NOTE: However, it seems that there may be certain ftp server implementations
+        ## that do support this out of the box or via a configurable parameters in a conf
+        ## I have been unable to find such a thing for vsftpd
+        return None
+
+    def test_ftpMessageHook_relogin_PASS(self, caplog): 
+        ## See comment above
+        return None
+
+    def test_ftpMessageHook_relogin_ACCT(self, caplog): 
+        ## See comment above
+        return None
+
+    def test_ftpMessageHook_nonLoginCommands(self, caplog): raise NotImplementedError
+    def test_clientToServerHook(self, caplog): raise NotImplementedError()
+    def test_serverToProxyHook(self, caplog): raise NotImplementedError()
