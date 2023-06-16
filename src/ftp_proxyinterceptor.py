@@ -1,44 +1,33 @@
 import re
 import logging
 import collections
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict, Generator
 
 from _proxyDS import StreamInterceptor, Buffer
 
+from abc import abstractmethod, ABCMeta
 
-class FTPProxyInterceptor(StreamInterceptor):
+
+class FTPProxyInterceptor(StreamInterceptor, metaclass=ABCMeta):
     def __init__(self) -> None:
         super().__init__()
-
         ## Here are the requests
         self._requestQueue = collections.deque()
         self._responseQueue = collections.deque()
-
-        ## Here's the generator that holds the state
-        self._loginStateGenerator = self._updateLoginState()
-
-
+        self._stateGenerator = self._createStateGenerator()
+        self.REQUEST_DELIMITERS = [b"\r\n", b"\r"]
 
     ## NOTE: These methods assume that the there is at least one delimited reqeust in buffer
     ## NOTE: These methods assume that the correct buffer has been passed as an argument
     def clientToServerRequestHook(self, buffer: Buffer) -> None:
         ## we retrieve a request from the buffer
-        request, delimited = buffer.popFromQueue()
-        if not delimited:
-            raise ValueError("Cannot perform request hook on a request that isn't delimited (i.e. not complete)")
-
+        request, _ = buffer.popFromQueue()
         self.ftpMessageHook(request=request)
-
-
 
     def serverToClientRequestHook(self,  buffer: Buffer) -> None:
       ## we retrieve a request from the buffer
-        response, delimited = buffer.popFromQueue()
-        if not delimited:
-            raise ValueError("Cannot perform request hook on a request that isn't delimited (i.e. not complete)")
-
+        response, _ = buffer.popFromQueue()
         self.ftpMessageHook(response=response)
-
 
 
     def ftpMessageHook(self, request: Optional[str] = None, response: Optional[str] = None) -> None:
@@ -74,16 +63,42 @@ class FTPProxyInterceptor(StreamInterceptor):
         ## We then check if there exists a request with a corresponding response
         if min(len(self._requestQueue), len(self._responseQueue)) > 0:
             ## execute a generator (that maintains the state of the login mechanism)
-            next(self._loginStateGenerator)
+            next(self._stateGenerator)
 
         return None
+
 
     def _validateHookArgs(self, request: Optional[str] = None, response: Optional[str] = None) -> None:
         if not (bool(request) ^ bool(response)):
             raise Exception(f"Cannot only pass a request OR response, not both - request={request}, response={response}")
-        
+
+    def _getResponseCode(self, response: str) -> int:
+        ## All reply codes have a length of 3
+        ## Reply code xyz
+        ## 1 <= x <= 5
+        ## 0 <= y <= 5
+        ## 0 <= z <= 9 ## not specified on FRC and servers may provide custom replies so we take up the whole range 0-9
+        ## NOTE: Multiline replies may do \d\d\d-firstline ... instead of \d\d\d only line (space vs hyphen)
+        ret = re.search("^([1-5][0-5][0-9])[ -]", response)
+        return int(ret.groups()[0])
+
+    @abstractmethod
+    def _createStateGenerator(self) -> Generator:
+        ...
+
+    @abstractmethod
+    def _executeSuccessHook(self, *args, **kwargs) -> None:
+        ...
+
+
+
+
+class FTPLoginProxyInterceptor(FTPProxyInterceptor):
+    def _createStateGenerator(self) -> Generator:
+        return self._updateLoginState()
 
     def _updateLoginState(self) -> None:
+        print("updating login state")
         ## Now we perform the logic
         ## We continuously track logins until the ftp connection is shut down
         ## We refer to Page 58 of the FTP RFC 959 for the Login Sequence
@@ -94,115 +109,135 @@ class FTPProxyInterceptor(StreamInterceptor):
 
         ## NOTE: There is no need for an else statement for each request below
 
-
         while True:
             ## Define variables
-            username, USERrequest, USERresponse = None, None, None
-            password, PASSrequest, PASSresponse = None, None, None
-            account, ACCTrequest, ACCTresponse = None, None, None
-
-
-
-            ## 1. First Request (USER)
-            request = self._requestQueue.pop()
-            response = self._responseQueue.pop()
+            username = None
+            password = None
+            messages = {}
 
             ## NOTE: The reason why the first step is different from step 2 and 3 is that we need to wait for the USER command
             ## to trigger a command sequence. This is why we check every request to see if it is a USER request which will trigger
             ## the login command sequence
+
+            ## 1. First Request (USER)
+            request = self._requestQueue.pop()
+            response = self._responseQueue.pop()
+            messages["USERrequest"] = request
+            messages["USERresponse"] = response
             if self._isUSERRequest(request):
-                responseCode = self._getResponseCode(response)
-                if 100 <= responseCode <= 199:
-                    ## Error
-                    self._createFTPLoginErrorMessage("ERROR", "USER", (USERrequest, USERresponse))
-                    yield
-                    continue
-                elif 200 <= responseCode <= 299:
-                    ## Success
-                    ## NOTE: You should not be able to login with just USER command
-                    username = self._getUsername(request)
-                    self._createFTPLoginSuccessMessage(username)
-                    logging.critical("CRITICAL: A user was able to login only by using a 'USER' command. \
-                                     This means they didn't require a password which should NOT happen")
-                    yield
-                    continue
-                elif 400 <= responseCode <= 599:
-                    ## Failure
-                    self._createFTPLoginErrorMessage("FAILURE", "USER", (USERrequest, USERresponse))
-                    yield
-                    continue
-
-                ## otherwise we got 3yz reply (intermediary positive reply), so we continue with the command sequence
+                completeReq, username = self._parseUSERrequest(request, response, messages)
                 yield
-
+                if completeReq is True:
+                    continue
             ## otherwise, we didn't get a USER request, so we ignore it, and go back to the top of the while loop
             else:
                 yield
                 continue
 
-
-
             ## 2. Second Request (PASS)
             request = self._requestQueue.pop()
             response = self._responseQueue.pop()
-
-            responseCode = self._getResponseCode(response)
-            if 100 <= responseCode <= 199:
-                ## Error
-                self._createFTPLoginErrorMessage("ERROR", "PASS", (USERrequest, USERresponse), (PASSrequest, PASSresponse))
-                yield
-                continue
-            elif 200 <= responseCode <= 299:
-                ## Success
-                password = self._getPassword(request)
-                self._createFTPLoginSuccessMessage(username, password)
-                self._executeFTPLoginSuccessHook(username=username, password=password)
-                yield
-                continue
-            elif 400 <= responseCode <= 599:
-                ## Failure
-                self._createFTPLoginErrorMessage("FAILURE", "PASS", (USERrequest, USERresponse), (PASSrequest, PASSresponse))
-                yield
-                continue
-
-            ## otherwise we got 3yz reply, so we continue
+            messages["PASSrequest"] = request
+            messages["PASSresponse"] = response
+            completeReq, password = self._parsePASSrequest(request, response, messages, username)
             yield
-
-
+            if completeReq is True:
+                continue
 
             ## 3. Third Request (ACCT)
             request = self._requestQueue.pop()
             response = self._responseQueue.pop()
-
-            responseCode = self._getResponseCode(response)
-            if 100 <= responseCode <= 199 or 300 <= responseCode <= 399:
-                ## Error
-                self._createFTPLoginErrorMessage("ERROR", "ACCT", (USERrequest, USERresponse), (PASSrequest, PASSresponse), (ACCTrequest, ACCTresponse))
-                yield
-                continue
-            elif 200 <= responseCode <= 299:
-                ## Success
-                account = self._getAccount(request)
-                self._createFTPLoginSuccessMessage(username, password, account)
-                logging.critical("CRITICAL: A user was able to login using 'ACCT' - The FTP server should NOT be configured for this")
-                yield
-                continue
-            elif 400 <= responseCode <= 599:
-                ## Failure
-                self._createFTPLoginErrorMessage("FAILURE", "ACCT", (USERrequest, USERresponse), (PASSrequest, PASSresponse), (ACCTrequest, ACCTresponse))
-                yield
-                continue
-                ## There is no else case unless 6xx returned
-
-            ## otherwise we got 3yz reply, so we continue
+            messages["ACCTrequest"] = request
+            messages["ACCTresponse"] = response
+            completeReq, _ = self._parseACCTrequest(request, response, messages, username, password)
             yield
 
+            ## NOTE: There should be no 3yz reply code (hence to check if completeReq is True)
 
-    def _executeFTPLoginSuccessHook(self, username: str, password: str) -> None:
+        return None
+
+    def _parseUSERrequest(self, request, response, messages: Dict[str, str]) -> Optional[str]:
+        messages["USERrequest"] = request
+        messages["USERresponse"] = response
+        responseCode = self._getResponseCode(response)
+        if 100 <= responseCode <= 199:
+            ## Error
+            self._createFTPLoginErrorMessage("ERROR", "USER", (messages["USERrequest"], messages["USERresponse"]))
+            return True, None
+        elif 200 <= responseCode <= 299:
+            ## Success
+            ## NOTE: You should not be able to login with just USER command
+            username = self._getUsername(request)
+            self._createFTPLoginSuccessMessage("USER", username)
+            self._executeSuccessHook(username)
+            return True, username
+        elif 400 <= responseCode <= 599:
+            ## Failure
+            self._createFTPLoginErrorMessage("FAILURE", "USER", (messages["USERrequest"], messages["USERresponse"]))
+            return True, None
+        else:
+            ## otherwise we got 3yz reply (intermediary positive reply), so we continue with the command sequence
+            username = self._getUsername(request)
+            return False, username
+
+
+    def _parsePASSrequest(self, request, response, messages, username) -> Optional[str]:
+        responseCode = self._getResponseCode(response)
+        if 100 <= responseCode <= 199:
+            ## Error
+            self._createFTPLoginErrorMessage("ERROR", "PASS", (messages["USERrequest"],
+            messages["USERresponse"]), (messages["PASSrequest"], messages["PASSresponse"]))
+            return True, None
+        elif 200 <= responseCode <= 299:
+            ## Success
+            password = self._getPassword(request)
+            self._createFTPLoginSuccessMessage("PASS", username, password)
+            self._executeSuccessHook(username, password)
+            return True, password
+        elif 400 <= responseCode <= 599:
+            ## Failure
+            self._createFTPLoginErrorMessage("FAILURE", "PASS", (messages["USERrequest"],
+            messages["USERresponse"]), (messages["PASSrequest"], messages["PASSresponse"]))
+            return True, None
+        else:
+            ## otherwise we got 3yz reply, so we continue
+            password = self._getPassword(request)
+            return False, password
+
+
+    def _parseACCTrequest(self, request, response, messages, username, password) -> Optional[str]:
+        responseCode = self._getResponseCode(response)
+        if 100 <= responseCode <= 199 or 300 <= responseCode <= 399:
+            ## Error
+            self._createFTPLoginErrorMessage("ERROR", "ACCT", (messages["USERrequest"], messages["USERresponse"]),
+            (messages["PASSrequest"], messages["PASSresponse"]), (messages["ACCTrequest"], messages["ACCTresponse"]))
+            return True, None
+        elif 200 <= responseCode <= 299:
+            ## Success
+            account = self._getAccount(request)
+            self._createFTPLoginSuccessMessage("ACCT", username, password, account)
+            self._executeSuccessHook(username, password, account)
+            return True, account
+        elif 400 <= responseCode <= 599:
+            ## Failure
+            self._createFTPLoginErrorMessage("FAILURE", "ACCT", (messages["USERrequest"], messages["USERresponse"]),
+            (messages["PASSrequest"], messages["PASSresponse"]), (messages["ACCTrequest"], messages["ACCTresponse"]))
+            return True, None
+        else:
+            ## I believe there should be no 3yz error if ACCT is received
+            ## TODO: Confirm this is True by reviewing RFC959
+            self._createFTPLoginErrorMessage("ERROR", "ACCT", (messages["USERrequest"], messages["USERresponse"]),
+            (messages["PASSrequest"], messages["PASSresponse"]), (messages["ACCTrequest"], messages["ACCTrequest"]))
+            return False, None
+
+    def _executeSuccessHook(self, username: Optional[str] = None, password: Optional[str] = None, account: Optional[str] = None) -> None:
         """This will async communicate with the _database class component to check whether the creds are a bait trap"""
+        print("Success!!")
         raise NotImplementedError()
 
 
+    ## TODO: Restructure Success and Error messages to use Logging fields!!!
+    ## NOTE: This makes debugging and sifting through logs so much easier!!!
     def _createFTPLoginSuccessMessage(self, requestVerb: str,
                                         username: Optional[str] = None,
                                         password: Optional[str] = None,
@@ -214,16 +249,16 @@ class FTPProxyInterceptor(StreamInterceptor):
         assert requestVerb in ("USER", "PASS", "ACCT")
 
         ## Create success message
-        successMsg = "SUCCESS @ftp.cmds.%s - ", requestVerb
+        successMsg = "SUCCESS @ftp.cmds.%s - " % requestVerb
         if username:
-            successMsg += "Username: <%s>, ", username
+            successMsg += "Username: <%s>, " % username
         if password:
-            successMsg += "Password: <%s>, ", password
+            successMsg += "Password: <%s>, " % password
         if account:
-            successMsg += "Account: <%s>", account
+            successMsg += "Account: <%s>" % account
 
         ## Log the success message
-        logging.info(successMsg)
+        logging.critical(successMsg)
 
 
     def _createFTPLoginErrorMessage(self, errorType: str, requestVerb: str,
@@ -238,20 +273,19 @@ class FTPProxyInterceptor(StreamInterceptor):
         assert requestVerb in ("USER", "PASS", "ACCT")
 
         ## Create error message
-        errorMsg = "%s @ftp.cmds.%s - \t", errorType, requestVerb
+        errorMsg = "%s @ftp.cmds.%s " % (errorType, requestVerb)
         if USERmessages:
-            errorMsg += "1) USER-request: <%s>, USER-response: <%s>, \t", USERmessages[0], USERmessages[1]
+            errorMsg += "1) USER-request: <%s>, USER-response: <%s>, \t" % (repr(USERmessages[0]), repr(USERmessages[1]))
         if PASSmessages:
-            errorMsg += "2) PASS-request: <%s>, PASS-response: <%s>, \t", PASSmessages[0], PASSmessages[1]
+            errorMsg += "2) PASS-request: <%s>, PASS-response: <%s>, \t" % (repr(PASSmessages[0]), repr(PASSmessages[1]))
         if ACCTmessages:
-            errorMsg += "2) ACCT-request: <%s>, ACCT-response: <%s>, \t", ACCTmessages[0], ACCTmessages[1]
+            errorMsg += "2) ACCT-request: <%s>, ACCT-response: <%s>, \t" % (repr(ACCTmessages[0]), repr(ACCTmessages[1]))
 
         ## Log the error message
         if errorType == "FAILURE":
-            logging.info(errorMsg)
+            logging.error(errorMsg)
         else:
             logging.error(errorMsg)
-
 
 
     def _isUSERRequest(self, request: str) -> bool:
@@ -261,7 +295,7 @@ class FTPProxyInterceptor(StreamInterceptor):
         ## implementations that have the same behavior)
 
         ## NOTE: the regex checks if the strings starts with zero or more spaces and then has a USER string succeedeing it
-        if re.search('^\s*USER', request):
+        if re.search("^USER (\w+)(\r\n|\r)", request):
             return True
         return False
 
@@ -270,43 +304,21 @@ class FTPProxyInterceptor(StreamInterceptor):
     ## NOTE: These methods will only be executed assuming that the request received a positive 3xx response
     ## --> This means input validation on the request isn't neccessary
     def _getUsername(self, request: str) -> str:
+        ret = re.search("^USER (\w+)(\r\n|\r)", request)
+        return ret.groups()[0]
         ## The User request should be delimited with either \r\n or \r at the END of the request, so we strip that on the end (i.e. right of str)
         ## NOTE: Although the RFC 959 defines the commands on 1985, we don't have to adhere to its strictness and can
         ## be lenient in order to interpret requests that would otherwise be incorrect against the standard.
         ## e.g. in the below, the "space" should not be between the last param and the CRLF delimeter
-        request = request.strip(" \r\n")
-        entities = [entity.strip(" ") for entity in request.split(" ")]
-
-        if len(entities) != 2:
-            raise Exception(f"Cannot have a USER command that doesn't have two entities - {request}")
-        return entities[1]
 
     def _getPassword(self, request: str) -> str:
-        request = request.strip(" \r\n")
-        entities = [entity.strip(" ") for entity in request.split(" ")]
-
-        if len(entities) != 2:
-            raise Exception(f"Cannot have a PASS command that doesn't have two entities - {request}")
-        return entities[1]
+        ret = re.search("^PASS (\w+)(\r\n|\r)", request)
+        return ret.groups()[0]
 
     def _getAccount(self, request: str) -> str:
-        request = request.strip(" \r\n")
-        entities = [entity.strip(" ") for entity in request.split(" ")]
+        ret = re.search("^ACCT (\w+)(\r\n|\r)", request)
+        return ret.groups()[0]
 
-        if len(entities) != 2:
-            raise Exception(f"Cannot have a ACCT command that doesn't have two entities - {request}")
-        return entities[1]
-
-
-    def _getResponseCode(self, response: str) -> Optional[int]:
-        ## All reply codes have a length of 3
-        ## Reply code xyz
-        ## 1 <= x <= 5
-        ## 0 <= y <= 5
-        ## 0 <= z <= 9 ## not specified on FRC and servers may provide custom replies so we take up the whole range 0-9
-        ## NOTE: Multiline replies may do \d\d\d-firstline ... instead of \d\d\d only line (space vs hyphen)
-        ret = re.search('^([1-5][0-5][0-9])[ -]', response)
-        return int(ret.groups()[0])
 
 
 
