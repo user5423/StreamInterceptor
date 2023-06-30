@@ -659,3 +659,331 @@ class Test_Buffer_MessageQueueOperations:
     ## singleQueue (undelimited vs delimited)
     ## multiQueue (undelimited vs delimited)
 
+
+
+class _flag:
+    def __init__(self): self.isRan = False
+    def setFlag(self): self.isRan = True
+    def isSet(self): return self.isRan
+
+
+@pytest.fixture()
+def hookTestResources(defaultBuffer):
+    b = defaultBuffer
+    flag = _flag()
+    message = bytearray(b"completeMessage\r\n") ## messageHook only called on completeMessages
+    return b, flag, message
+
+
+ 
+class Test_Buffer_Hooks:
+    ## TODO: Need to test whether execmessageParsing is being executed correctly!!
+    ## TODO: Need to assert whether the state of the buffer doesn't change
+
+    def _simulateHook(self, buffer: Buffer, message: bytes, flag: "Type[self._flag]", hookType: "Type[self._hook]", hookStr: str, hookArgs: Tuple = (), hookKwargs: Dict = {}) -> None:
+        hook_partial = functools.partial(hookType, *hookArgs, **hookKwargs)
+        if hookStr == "user":
+            buffer.setUserHook(hook_partial)
+            buffer._executeHook(buffer._userHook, message)
+        else:
+            buffer.setProcessingHook(hook_partial)
+            buffer._executeHook(buffer._processingHook, message)
+
+        isRan = False
+        buffer._execMessageParsing(message)
+        assert flag.isSet()
+
+        
+
+    def test_userHookDefault(self, hookTestResources):
+        b, flag, message = hookTestResources
+        assert b._executeHook(b._userHook, message) is None
+                
+
+    def test_userHookFunctor_noParams(self, hookTestResources):
+        b, flag, message = hookTestResources
+        class UserHook:
+            def __init__(self, buffer=None):
+                self.buffer = buffer
+
+            def __call__(self, message: bytearray) -> None:
+                nonlocal flag
+                flag.setFlag()
+
+        self._simulateHook(b, message, flag, UserHook, "user")
+
+
+    def test_userHookFunctor_args(self, hookTestResources):
+        b, flag, message = hookTestResources
+        args = ("arg1", "arg2")
+        class UserHook:
+            def __init__(self, arg1, arg2, buffer=None):
+                self.arg1 = arg1
+                self.arg2 = arg2
+                self.buffer = buffer
+
+            def __call__(self, message: bytearray) -> None:
+                nonlocal flag
+                flag.setFlag()
+
+        self._simulateHook(b, message, flag, UserHook, "user", args)
+        assert b._userHook.arg1 == args[0]
+        assert b._userHook.arg2 == args[1]
+
+
+    def test_userHookFunctor_kwargs(self, hookTestResources):
+        b, flag, message = hookTestResources
+        kwargs = {"kwarg1": "val1", "kwarg2": "val2"}
+
+        class UserHook:
+            def __init__(self, kwarg1=None, kwarg2=None, buffer=None):
+                self.kwarg1 = kwarg1
+                self.kwarg2 = kwarg2
+                self.buffer = buffer
+
+            def __call__(self, message: bytearray) -> None:
+                nonlocal flag
+                flag.setFlag()
+
+        self._simulateHook(b, message, flag, UserHook, "user", hookKwargs = kwargs)
+        assert b._userHook.kwarg1 == kwargs["kwarg1"]
+        assert b._userHook.kwarg2 == kwargs["kwarg2"]
+
+
+    def test_userHookFunctor_argsAndKwargs(self, hookTestResources):
+        b, flag, message = hookTestResources
+        kwargs = {"kwarg1": "val1", "kwarg2": "val2"}
+        args = ("arg1", "arg2")
+        class UserHook:
+            def __init__(self, arg1, arg2, kwarg1=None, kwarg2=None, buffer=None):
+                self.arg1 = arg1
+                self.arg2 = arg2
+                self.kwarg1 = kwarg1
+                self.kwarg2 = kwarg2
+                self.buffer = buffer
+
+            def __call__(self, message: bytearray) -> None:
+                nonlocal flag
+                flag.setFlag()
+
+        self._simulateHook(b, message, flag, UserHook, "user", args, kwargs)
+        assert b._userHook.kwarg1 == kwargs["kwarg1"]
+        assert b._userHook.kwarg2 == kwargs["kwarg2"]
+        assert b._userHook.arg1 == args[0]
+        assert b._userHook.arg2 == args[1]
+
+
+    def test_userHookGenerator_noParams(self, hookTestResources):
+        b, flag, message = hookTestResources
+        def UserHook(buffer=None):
+            nonlocal flag
+            while True:
+                message = yield
+                flag.setFlag()
+            return None
+
+        self._simulateHook(b, message, flag, UserHook, "user")
+
+
+    def test_userHookGenerator_args(self, hookTestResources):
+        b, flag, message = hookTestResources
+        args = ("arg1", "arg2")
+        _arg1 = None; _arg2 = None
+        def UserHook(arg1, arg2, buffer=None):
+            nonlocal _arg1, _arg2
+            _arg1 = arg1; _arg2 = arg2
+            nonlocal flag
+            while True:
+                message = yield
+                flag.setFlag()
+            return None
+
+        self._simulateHook(b, message, flag, UserHook, "user", args)
+        assert _arg1 == args[0]
+        assert _arg2 == args[1]
+
+    def test_userHookGenerator_kwargs(self, hookTestResources):
+        b, flag, message = hookTestResources
+        kwargs = {"kwarg1": "val1", "kwarg2": "val2"}
+        _kwarg1 = None; _kwarg2 = None
+        def UserHook(kwarg1, kwarg2, buffer=None):
+            nonlocal _kwarg1, _kwarg2
+            _kwarg1 = kwarg1; _kwarg2 = kwarg2
+            nonlocal flag
+            while True:
+                message = yield
+                flag.setFlag()
+            return None
+
+        self._simulateHook(b, message, flag, UserHook, "user", hookKwargs=kwargs)
+        assert _kwarg1 == kwargs["kwarg1"]
+        assert _kwarg2 == kwargs["kwarg2"]
+
+
+    def test_userHookGenerator_argsAndKwargs(self, hookTestResources):
+        b, flag, message = hookTestResources
+        args = ("arg1", "arg2")
+        kwargs = {"kwarg1": "val1", "kwarg2": "val2"}
+        _arg1 = None; _arg2 = None
+        _kwarg1 = None; _kwarg2 = None
+        def UserHook(arg1, arg2, kwarg1=None, kwarg2=None, buffer=None):
+            nonlocal _arg1, _arg2, _kwarg1, _kwarg2
+            _arg1 = arg1; _arg2 = arg2; _kwarg1 = kwarg1; _kwarg2 = kwarg2
+            nonlocal flag
+            while True:
+                message = yield
+                flag.setFlag()
+            return None
+
+        self._simulateHook(b, message, flag, UserHook, "user", args, kwargs)
+        assert _arg1 == args[0]
+        assert _arg2 == args[1]
+        assert _kwarg1 == kwargs["kwarg1"]
+        assert _kwarg2 == kwargs["kwarg2"]
+
+
+    def test_processingHookDefault(self, hookTestResources):
+        b, flag, message = hookTestResources
+        assert b._executeHook(b._processingHook, message) is True
+
+
+    def test_processingHookFunctor_noParams(self, hookTestResources):
+        b, flag, message = hookTestResources
+        class ProcessingHook:
+            def __init__(self, buffer=None):
+                self.buffer = buffer
+
+            def __call__(self, message: bytearray) -> None:
+                nonlocal flag
+                flag.setFlag()
+
+        self._simulateHook(b, message, flag, ProcessingHook, "processing")
+
+
+    def test_processingHookFunctor_args(self, hookTestResources):
+        b, flag, message = hookTestResources
+        args = ("arg1", "arg2")
+        class ProcessingHook:
+            def __init__(self, arg1, arg2, buffer=None):
+                self.arg1 = arg1
+                self.arg2 = arg2
+                self.buffer = buffer
+
+            def __call__(self, message: bytearray) -> None:
+                nonlocal flag
+                flag.setFlag()
+
+        self._simulateHook(b, message, flag, ProcessingHook, "processing", args)
+        assert b._processingHook.arg1 == args[0]
+        assert b._processingHook.arg2 == args[1]
+
+
+    def test_processingHookFunctor_kwargs(self, hookTestResources):
+        b, flag, message = hookTestResources
+        kwargs = {"kwarg1": "val1", "kwarg2": "val2"}
+
+        class ProcessingHook:
+            def __init__(self, kwarg1=None, kwarg2=None, buffer=None):
+                self.kwarg1 = kwarg1
+                self.kwarg2 = kwarg2
+                self.buffer = buffer
+
+            def __call__(self, message: bytearray) -> None:
+                nonlocal flag
+                flag.setFlag()
+
+        self._simulateHook(b, message, flag, ProcessingHook, "processing", hookKwargs = kwargs)
+        assert b._processingHook.kwarg1 == kwargs["kwarg1"]
+        assert b._processingHook.kwarg2 == kwargs["kwarg2"]
+
+
+    def test_processingHookFunctor_argsAndKwargs(self, hookTestResources):
+        b, flag, message = hookTestResources
+        kwargs = {"kwarg1": "val1", "kwarg2": "val2"}
+        args = ("arg1", "arg2")
+        class ProcessingHook:
+            def __init__(self, arg1, arg2, kwarg1=None, kwarg2=None, buffer=None):
+                self.arg1 = arg1
+                self.arg2 = arg2
+                self.kwarg1 = kwarg1
+                self.kwarg2 = kwarg2
+                self.buffer = buffer
+
+            def __call__(self, message: bytearray) -> None:
+                nonlocal flag
+                flag.setFlag()
+
+        self._simulateHook(b, message, flag, ProcessingHook, "processing", args, kwargs)
+        assert b._processingHook.kwarg1 == kwargs["kwarg1"]
+        assert b._processingHook.kwarg2 == kwargs["kwarg2"]
+        assert b._processingHook.arg1 == args[0]
+        assert b._processingHook.arg2 == args[1]
+
+
+    def test_processingHookGenerator_noParams(self, hookTestResources):
+        b, flag, message = hookTestResources
+        def ProcessingHook(buffer=None):
+            nonlocal flag
+            while True:
+                message = yield
+                flag.setFlag()
+            return None
+
+        self._simulateHook(b, message, flag, ProcessingHook, "processing")
+
+
+    def test_processingHookGenerator_args(self, hookTestResources):
+        b, flag, message = hookTestResources
+        args = ("arg1", "arg2")
+        _arg1 = None; _arg2 = None
+        def ProcessingHook(arg1, arg2, buffer=None):
+            nonlocal _arg1, _arg2
+            _arg1 = arg1; _arg2 = arg2
+            nonlocal flag
+            while True:
+                message = yield
+                flag.setFlag()
+            return None
+
+        self._simulateHook(b, message, flag, ProcessingHook, "processing", args)
+        assert _arg1 == args[0]
+        assert _arg2 == args[1]
+
+
+    def test_processingHookGenerator_kwargs(self, hookTestResources):
+        b, flag, message = hookTestResources
+        kwargs = {"kwarg1": "val1", "kwarg2": "val2"}
+        _kwarg1 = None; _kwarg2 = None
+        def ProcessingHook(kwarg1=None, kwarg2=None, buffer=None):
+            nonlocal _kwarg1, _kwarg2
+            _kwarg1 = kwarg1; _kwarg2 = kwarg2
+            nonlocal flag
+            while True:
+                message = yield
+                flag.setFlag()
+            return None
+
+        self._simulateHook(b, message, flag, ProcessingHook, "processing", hookKwargs=kwargs)
+        assert _kwarg1 == kwargs["kwarg1"]
+        assert _kwarg2 == kwargs["kwarg2"]
+
+    def test_processingHookGenerator_argsAndKwargs(self, hookTestResources):
+        b, flag, message = hookTestResources
+        args = ("arg1", "arg2")
+        kwargs = {"kwarg1": "val1", "kwarg2": "val2"}
+        _arg1 = None; _arg2 = None
+        _kwarg1 = None; _kwarg2 = None
+        def ProcessingHook(arg1, arg2, kwarg1=None, kwarg2=None, buffer=None):
+            nonlocal _arg1, _arg2, _kwarg1, _kwarg2
+            _arg1 = arg1; _arg2 = arg2; _kwarg1 = kwarg1; _kwarg2 = kwarg2
+            nonlocal flag
+            while True:
+                message = yield
+                flag.setFlag()
+            return None
+
+        self._simulateHook(b, message, flag, ProcessingHook, "processing", args, kwargs)
+        assert _arg1 == args[0]
+        assert _arg2 == args[1]
+        assert _kwarg1 == kwargs["kwarg1"]
+        assert _kwarg2 == kwargs["kwarg2"]
