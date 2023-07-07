@@ -9,17 +9,9 @@ sys.path.insert(0, os.path.join("..", "src"))
 sys.path.insert(0, "src")
 from tcp_proxyserver import ProxyConnections, ProxyTunnel
 from _proxyDS import StreamInterceptor
+from tests.testhelper.TestResources import PTTestResources
 from _exceptions import *
 
-
-class MockStreamInterceptor(StreamInterceptor):
-    def __init__(self) -> None:
-        self.REQUEST_DELIMITERS = [b"\r\n"]
-    def clientToServerHook(self, requestChunk: bytes, buffer: "Buffer") -> None:
-        return None
-
-    def serverToClientHook(self, responseChunk: bytes, buffer: "Buffer") -> None:
-        return None
 
 
 class PCTestResources:
@@ -81,14 +73,14 @@ class PCTestResources:
 class Test_ProxyConnections_Init:
     ## Helper Method for testing host args
     def _assertValidHostArgs(self, PROXY_HOST, PROXY_PORT) -> None:
-        interceptor = MockStreamInterceptor
+        interceptor, _ = PTTestResources.createMockStreamInterceptor()
         selector = selectors.DefaultSelector()
         pc = ProxyConnections(PROXY_HOST, PROXY_PORT, interceptor, selector)
         PCTestResources._assertValidInitialization(pc, PROXY_HOST, PROXY_PORT, selector)
 
     ## Helper Method for testing host args
     def _assertInvalidHostArgs(self, PROXY_HOST, PROXY_PORT, errorMessageSnippet) -> None:
-        interceptor = MockStreamInterceptor
+        interceptor, _ = PTTestResources.createMockStreamInterceptor()
         selector = selectors.DefaultSelector()
         with pytest.raises(ValueError) as excInfo:
             ProxyConnections(PROXY_HOST, PROXY_PORT, interceptor, selector)
@@ -178,13 +170,13 @@ class Test_ProxyConnections_Init:
         ## NOTE: There are still incomplete methods that haven't been overriden
         PROXY_HOST, PROXY_PORT = "127.0.0.1", 80
         selector = selectors.DefaultSelector()
+        serverToClientMessages = collections.deque([])
+        class StreamInterceptor_incompleteClientToServerHook(StreamInterceptor):
 
-        class StreamInterceptor_incompleteClientToServerHook(MockStreamInterceptor):
-            def __init__(self) -> None:
-                self.serverToClientChunks = collections.deque([])
-
-            def serverToClientHook(self, requestChunk: bytes, buffer: "Buffer") -> None:
-                self.serverToClientChunks.append(requestChunk)
+            class ClientToServerHook(StreamInterceptor.Hook):
+                def __call__(self, message):
+                    nonlocal serverToClientMessages
+                    serverToClientMessages.append(message)
 
         interceptor = StreamInterceptor_incompleteClientToServerHook
         with pytest.raises(TypeError) as excInfo:
@@ -197,13 +189,14 @@ class Test_ProxyConnections_Init:
         ## NOTE: There are still incomplete methods that haven't been overriden
         PROXY_HOST, PROXY_PORT = "127.0.0.1", 80
         selector = selectors.DefaultSelector()
+        clientToServerMessages = collections.deque([])
 
-        class StreamInterceptor_incompleteServerToClientHook(MockStreamInterceptor):
-            def __init__(self) -> None:
-                self.clientToServerChunks = collections.deque([])
+        class StreamInterceptor_incompleteServerToClientHook(StreamInterceptor):
 
-            def clientToServerHook(self, requestChunk: bytes, buffer: "Buffer") -> None:
-                self.clientToServerChunks.append(requestChunk)
+            class ClientToServerHook(StreamInterceptor.Hook):
+                def __call__(self, message):
+                    nonlocal clientToServerMessages
+                    clientToServerMessages.append(message)
 
         interceptor = StreamInterceptor_incompleteServerToClientHook
         with pytest.raises(TypeError) as excInfo:
@@ -215,7 +208,7 @@ class Test_ProxyConnections_Init:
     def test_streamInterceptor_completeSubclass(self):
         ## NOTE: There are no incomplete request hooks
         PROXY_HOST, PROXY_PORT = "127.0.0.1", 80
-        interceptor = MockStreamInterceptor
+        interceptor, _ = PTTestResources.createMockStreamInterceptor()
         selector = selectors.DefaultSelector()
         pc = ProxyConnections(PROXY_HOST, PROXY_PORT, interceptor, selector)
         PCTestResources._assertValidInitialization(pc, PROXY_HOST, PROXY_PORT, selector)
@@ -224,7 +217,7 @@ class Test_ProxyConnections_Init:
 @pytest.fixture
 def createPC():
     PROXY_HOST, PROXY_PORT = "127.0.0.1", 80
-    streamInterceptor = MockStreamInterceptor
+    streamInterceptor, _ = PTTestResources.createMockStreamInterceptor()
     selector = selectors.DefaultSelector()
     pc = ProxyConnections(PROXY_HOST, PROXY_PORT, streamInterceptor, selector)
     return pc, PROXY_HOST, PROXY_PORT, streamInterceptor, selector
