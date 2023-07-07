@@ -16,8 +16,8 @@ import queue
 import datetime
 import math
 
-from testhelper.TCPProxyServer import TPSTestResources
-from testhelper.DataTransferSimulator import DataTransferSimulator
+from tests.testhelper.TCPProxyServer import TPSTestResources
+from tests.testhelper.DataTransferSimulator import DataTransferSimulator
 from tests.testhelper.TestResources import PTTestResources
 
 
@@ -34,7 +34,7 @@ from _proxyDS import StreamInterceptor, Buffer
 def createTCPProxyServer():
     PROXY_HOST, PROXY_PORT = "127.0.0.1", 1337
     HOST, PORT = "127.0.0.1", 8080
-    streamInterceptor = PTTestResources.createMockStreamInterceptor()
+    streamInterceptor, _ = PTTestResources.createMockStreamInterceptor()
 
     ## first we need to kill any processes running on the (HOST, PORT)
     # TPSTestResources.freePort(PORT)
@@ -367,14 +367,13 @@ class Test_ProxyServer_connectionDataHandling:
 
         ## we then wait until each user socket has data (which means that data has propagated through proxy server)
         DataTransferSimulator._awaitRoundaboutConnection(connections)
-
         ## Assertions
         try:
             ## we should check the following
             TPSTestResources.assertConstantAttributes(proxyServer, *proxyServerArgs)
             TPSTestResources.assertSelectorState(proxyServer, connections)
             TPSTestResources.assertProxyConnectionsState(proxyServer, connections)
-            TPSTestResources.assertUserConnectionData(connections, connectionData)
+            TPSTestResources.assertUserConnectionData(proxyServer.streamInterceptorType, connections, connectionData)
             TPSTestResources.assertProxyTunnelsState(proxyServer, connections, connectionData)
         except Exception as e:
             print(f"Assert ConnectionHandling - Exception raised: {e}")
@@ -385,14 +384,13 @@ class Test_ProxyServer_connectionDataHandling:
     ## Options are:
     ## - chunked (single, two, many)
     ## - messages (zero, single, two, many) + (undelimited/delimited)
-    ## - connections (single, many)
     ## - connection throughput size ( <bufferSize / >bufferSize)
 
     ## Single Connection
     ## Unfilled Buffer
     def test_singleConnection_singleChunk_unfilledBuffer_oneIncompleteMessage(self, createEchoProxyEnvironment) -> None:
         echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
-        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptor.REQUEST_DELIMITERS
+        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptorType.MESSAGE_DELIMITERS
 
         ## PARAMETERS
         connectionsToCreate = 1
@@ -404,13 +402,12 @@ class Test_ProxyServer_connectionDataHandling:
 
         completeConnSender = DataTransferSimulator.createRandomConnSender(dataSizeRange, messageCountRange, chunkCountRange, delimiterList, isEndDelimited, testTimeRange)
         dataTransferArgs = {"completeConnSender": completeConnSender}
-
         self._assertConnectionHandling(echoServer, proxyServerThreadWrapper, proxyServerArgs, connectionsToCreate, dataTransferArgs)
 
 
     def test_singleConnection_singleChunk_unfilledBuffer_oneCompleteMessages(self, createEchoProxyEnvironment) -> None:
         echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
-        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptor.REQUEST_DELIMITERS
+        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptorType.MESSAGE_DELIMITERS
 
         ## PARAMETERS
         connectionsToCreate = 1
@@ -428,7 +425,7 @@ class Test_ProxyServer_connectionDataHandling:
 
     def test_singleConnection_singleChunk_unfilledBuffer_oneCompleteMessages_IncompleteMessage(self, createEchoProxyEnvironment) -> None:
         echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
-        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptor.REQUEST_DELIMITERS
+        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptorType.MESSAGE_DELIMITERS
 
         ## PARAMETERS
         connectionsToCreate = 1
@@ -445,7 +442,7 @@ class Test_ProxyServer_connectionDataHandling:
 
     def test_singleConnection_singleChunk_unfilledBuffer_ManyCompleteMessages(self, createEchoProxyEnvironment) -> None:
         echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
-        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptor.REQUEST_DELIMITERS
+        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptorType.MESSAGE_DELIMITERS
 
         ## PARAMETERS
         connectionsToCreate = 1
@@ -462,7 +459,7 @@ class Test_ProxyServer_connectionDataHandling:
 
     def test_singleConnection_singleChunk_unfilledBuffer_ManyCompleteMessages_IncompleteMessage(self, createEchoProxyEnvironment) -> None:
         echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
-        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptor.REQUEST_DELIMITERS
+        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptorType.MESSAGE_DELIMITERS
 
         ## PARAMETERS
         connectionsToCreate = 1
@@ -502,7 +499,7 @@ class Test_ProxyServer_connectionDataHandling:
 #     ## Unfilled Buffer
     def test_multiConnection_singleChunk_unfilledBuffer_oneIncompleteMessage(self, createEchoProxyEnvironment) -> None:
         echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
-        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptor.REQUEST_DELIMITERS
+        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptorType.MESSAGE_DELIMITERS
 
         ## PARAMETERS
         connectionsToCreate = 100
@@ -520,7 +517,7 @@ class Test_ProxyServer_connectionDataHandling:
 
     def test_multiConnection_singleChunk_unfilledBuffer_oneCompleteMessages(self, createEchoProxyEnvironment) -> None:
         echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
-        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptor.REQUEST_DELIMITERS
+        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptorType.MESSAGE_DELIMITERS
 
         ## PARAMETERS
         connectionsToCreate = 100
@@ -538,7 +535,7 @@ class Test_ProxyServer_connectionDataHandling:
 
     def test_multiConnection_singleChunk_unfilledBuffer_oneCompleteMessages_IncompleteMessage(self, createEchoProxyEnvironment) -> None:
         echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
-        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptor.REQUEST_DELIMITERS
+        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptorType.MESSAGE_DELIMITERS
 
         ## PARAMETERS
         connectionsToCreate = 100
@@ -555,7 +552,7 @@ class Test_ProxyServer_connectionDataHandling:
 
     def test_multiConnection_singleChunk_unfilledBuffer_ManyCompleteMessages(self, createEchoProxyEnvironment) -> None:
         echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
-        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptor.REQUEST_DELIMITERS
+        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptorType.MESSAGE_DELIMITERS
 
         ## PARAMETERS
         connectionsToCreate = 100
@@ -572,7 +569,7 @@ class Test_ProxyServer_connectionDataHandling:
 
     def test_multiConnection_singleChunk_unfilledBuffer_ManyCompleteMessages_IncompleteMessage(self, createEchoProxyEnvironment) -> None:
         echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
-        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptor.REQUEST_DELIMITERS
+        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptorType.MESSAGE_DELIMITERS
 
         ## PARAMETERS
         connectionsToCreate = 100
