@@ -10,7 +10,7 @@ import signal
 import logging
 from datetime import datetime
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, Type
 
 from _proxyDS import Buffer, proxyHandlerDescriptor, StreamInterceptor
 from _exceptions import *
@@ -29,18 +29,18 @@ from _exceptions import *
 class ProxyTunnel:
     clientToProxySocket: socket.socket
     proxyToServerSocket: socket.socket
-    streamInterceptor: StreamInterceptor
+    streamInterceptorType: Type[StreamInterceptor]
     CHUNK_SIZE: int = field(default=1024, hash=None)
 
     def __post_init__(self):
         ## Initialize streamInterceptor
-        self.streamInterceptor = self.streamInterceptor()
+        self.streamInterceptor = self.streamInterceptorType()
         ## Setup Bidirectional Buffers
-        self.serverToClientBuffer = Buffer(self.streamInterceptor.REQUEST_DELIMITERS)
-        self.clientToServerBuffer = Buffer(self.streamInterceptor.REQUEST_DELIMITERS)
+        self.serverToClientBuffer = Buffer(self.streamInterceptor.MESSAGE_DELIMITERS)
+        self.clientToServerBuffer = Buffer(self.streamInterceptor.MESSAGE_DELIMITERS)
         ## Set hooks on Bidirectional Buffers
-        self.clientToServerBuffer.setHook(self.streamInterceptor.clientToServerHook)
-        self.serverToClientBuffer.setHook(self.streamInterceptor.serverToClientHook)
+        self.clientToServerBuffer.setTransparentHook(self.streamInterceptor.ClientToServerHook)
+        self.serverToClientBuffer.setTransparentHook(self.streamInterceptor.ServerToClientHook)
 
 
     def readFrom(self, source: socket.socket) -> Optional[int]:
@@ -104,7 +104,7 @@ class ProxyTunnel:
 class ProxyConnections:
     PROXY_HOST: str
     PROXY_PORT: int
-    streamInterceptor: StreamInterceptor
+    streamInterceptorType: Type[StreamInterceptor]
     selector: selectors.BaseSelector
 
     _sock: Dict[socket.socket, ProxyTunnel] = field(init=False, default_factory=dict)
@@ -122,10 +122,10 @@ class ProxyConnections:
             raise InvalidProxyPortError(self.PROXY_PORT)
 
         ## Validate interceptor
-        if (StreamInterceptor not in self.streamInterceptor.__mro__):
-            raise AbsentStreamInterceptorParentError(self.streamInterceptor)
-        elif (StreamInterceptor == self.streamInterceptor.__mro__[0]):
-            raise AbstractStreamInterceptorError(self.streamInterceptor)
+        if (StreamInterceptor not in self.streamInterceptorType.__mro__):
+            raise AbsentStreamInterceptorParentError(self.streamInterceptorType)
+        elif (StreamInterceptor == self.streamInterceptorType.__mro__[0]):
+            raise AbstractStreamInterceptorError(self.streamInterceptorType)
 
         ## TODO: We'll be moving to ABC Meta class for StreamInterceptor abstract classes
         ## --> Therefore the validation process and the corresponding pytest tests will likely change
@@ -137,21 +137,23 @@ class ProxyConnections:
         return self._sock.get(sock)
 
     ## TODO: We need to add methods for rewriting
-    def createTunnel(self, clientToProxySocket: socket.socket, proxyToServerSocket: socket.socket) -> ProxyTunnel:
+    def createTunnel(self, clientToProxySocket: socket.socket, proxyToServerSocket: socket.socket, selectorData: str = "connection", blocking: bool = True) -> ProxyTunnel:
         ## Check if the sockets are registered with a pre-existing tunnel
         if self._sock.get(clientToProxySocket):
             raise AlreadyRegisteredSocketError("clientToProxySocket", clientToProxySocket, self)
         elif self._sock.get(proxyToServerSocket):
             raise AlreadyRegisteredSocketError("proxyToServerSocket", proxyToServerSocket, self)
 
+        ## We set the proxy sockets to non-blocking
+        clientToProxySocket.setblocking(blocking)
+        proxyToServerSocket.setblocking(blocking)
         ## We then create a new proxyTunnel
-        proxyTunnel = ProxyTunnel(clientToProxySocket, proxyToServerSocket, self.streamInterceptor)
+        proxyTunnel = ProxyTunnel(clientToProxySocket, proxyToServerSocket, self.streamInterceptorType)
         self._sock[clientToProxySocket] = proxyTunnel
         self._sock[proxyToServerSocket] = proxyTunnel
 
-        ## We then register the associated sockets (so that they can be polled)
-        self.selector.register(clientToProxySocket, selectors.EVENT_READ | selectors.EVENT_WRITE, data="connection")
-        self.selector.register(proxyToServerSocket, selectors.EVENT_READ | selectors.EVENT_WRITE, data="connection")
+        self.selector.register(clientToProxySocket, selectors.EVENT_READ | selectors.EVENT_WRITE, data=selectorData)
+        self.selector.register(proxyToServerSocket, selectors.EVENT_READ | selectors.EVENT_WRITE, data=selectorData)
         
         return proxyTunnel
 
@@ -207,7 +209,7 @@ class TCPProxyServer:
     PORT: int
     PROXY_HOST: str
     PROXY_PORT: int
-    streamInterceptor: StreamInterceptor
+    streamInterceptorType: Type[StreamInterceptor]
     addressReuse: bool = field(default=False)
 
     serverSocket: socket.socket = field(init=False, repr=False)
@@ -218,7 +220,12 @@ class TCPProxyServer:
 
     def __post_init__(self):
         try:
+            ## NOTE: This removes root Handlers - if root handlers are not empty, logging won't write to our desired file
+            for handler in logging.root.handlers[:]:
+                logging.root.removeHandler(handler)
+
             logging.basicConfig(filename="server.log", level=logging.DEBUG)
+
             self._setupDataStructures()
             self._setupSignalHandlers()
             self._logDebugMessage("Server", "Server-Setup", "Success")
@@ -229,7 +236,7 @@ class TCPProxyServer:
 
     def _setupDataStructures(self):
         self.selector = selectors.DefaultSelector()
-        self.proxyConnections = ProxyConnections(self.PROXY_HOST, self.PROXY_PORT, self.streamInterceptor, self.selector)
+        self.proxyConnections = ProxyConnections(self.PROXY_HOST, self.PROXY_PORT, self.streamInterceptorType, self.selector)
         self._setupServerSocket()
 
 
@@ -257,7 +264,7 @@ class TCPProxyServer:
                     self._acceptConnection()
                 else:
                     # print(f"TCPProxyServer - Servicing connection: {selectorKey}")
-                    self._serviceConnection(selectorKey, bitmask)
+                    self._serviceConnection(selectorKey, bitmask, self.proxyConnections)
 
         self._close()
 
@@ -275,28 +282,33 @@ class TCPProxyServer:
 
 
     def _setupServerSocket(self) -> bool:
-        self._createServerSocket()
-        self._registerServerSocket()
+        self.serverSocket = self._createServerSocket()
+        self._registerServerSocket(self.serverSocket)
         print(f"Server listening on {self.HOST}:{self.PORT}\n\n")
 
 
     ##TODO: Provide exception handling for setting up the server sock
-    def _createServerSocket(self) -> bool:
+    def _createServerSocket(self, address: Optional[Tuple[str, int]] = None) -> socket.socket:
+        if address is None:
+            address = (self.HOST, self.PORT)
+
         try:
-            self.serverSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            serverSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             if self.addressReuse:
-                self.serverSocket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.serverSocket.bind((self.HOST, self.PORT))
-            self.serverSocket.listen()
-            self.serverSocket.setblocking(False)
+                serverSocket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            serverSocket.bind(address)
+            serverSocket.listen()
+            serverSocket.setblocking(False)
         except socket.error as e:
             print(f"TCPProxy Server Socker Error: {e}")
-            self.serverSocket.close()
+            serverSocket.close()
             raise e
 
+        return serverSocket
 
-    def _registerServerSocket(self) -> None:
-        self.selector.register(self.serverSocket, selectors.EVENT_READ, data="ServerSocket")
+
+    def _registerServerSocket(self, serverSocket: socket.socket, selectorKey: str = "ServerSocket") -> None:
+        self.selector.register(serverSocket, selectors.EVENT_READ, data=selectorKey)
 
 
     def _acceptConnection(self) -> None:
@@ -313,11 +325,11 @@ class TCPProxyServer:
         logging.info(f"{datetime.now()}\t{hostname}\t{port}\tUndefined\tConnection-Accepted\tSuccess")
         
 
-    def _serviceConnection(self, selectorKey: selectors.SelectorKey, bitmask: int) -> None:
+    def _serviceConnection(self, selectorKey: selectors.SelectorKey, bitmask: int, proxyConns: Optional[ProxyConnections] = None) -> None:
         sock = selectorKey.fileobj
 
         ## NOTE: It's possible the the other socket of the tunnel closed the tunnel
-        proxyTunnel = self.proxyConnections.get(sock)
+        proxyTunnel = proxyConns.get(sock)
         if proxyTunnel is None:
             return None
 
@@ -327,14 +339,14 @@ class TCPProxyServer:
             out = proxyTunnel.readFrom(sock)
             ## If socket is closed, close tunnel
             if out is None:
-                return self.proxyConnections.closeTunnel(proxyTunnel)
+                return proxyConns.closeTunnel(proxyTunnel)
 
         if bitmask & selectors.EVENT_WRITE:
             ## Writes data from buffer into socket (if any)
             out = proxyTunnel.writeTo(sock)
             ## If socket is closed, close tunnel
             if out is None:
-                return self.proxyConnections.closeTunnel(proxyTunnel)
+                return proxyConns.closeTunnel(proxyTunnel)
             
 
     def _logDebugMessage(self, user: str = "Server", eventType: str = "Default", description: str = "Default",) -> None:
@@ -344,8 +356,6 @@ class TCPProxyServer:
     def close(self, blocking: bool = True) -> None:
         self._exitFlag = True
         self._terminated.wait()
-
-    
 
    ## Required parameters by signal handler
     def _sigHandler(self, signum, frame) -> None:
@@ -357,8 +367,8 @@ class TCPProxyServer:
 def main():
     HOST, PORT = "0.0.0.0", 8080
     PROXY_HOST, PROXY_PORT = "127.0.0.1", 80
-    streamInterceptor = StreamInterceptor
-    TPS = TCPProxyServer(HOST, PORT, PROXY_HOST, PROXY_PORT, streamInterceptor)
+    streamInterceptorType = StreamInterceptor
+    TPS = TCPProxyServer(HOST, PORT, PROXY_HOST, PROXY_PORT, streamInterceptorType)
     TPS.run()
 
 
