@@ -17,19 +17,23 @@ class PTTestResources:
 
     @staticmethod
     def createMockStreamInterceptor():
+        clientToServerDeque = collections.deque([])
+        serverToClientDeque = collections.deque([])
+        
         class mockStreamInterceptor(StreamInterceptor):
-            REQUEST_DELIMITERS = [b"\r\n"]
-            def __init__(self):
-                self.clientToServerDeque = collections.deque([])
-                self.serverToClientDeque = collections.deque([])
+            MESSAGE_DELIMITERS = [b"\r\n"]
 
-            def clientToServerHook(self, request: bytearray) -> None:
-                self.clientToServerDeque.append(request)
+            class ClientToServerHook(StreamInterceptor.Hook):
+                def __call__(self, message: bytes) -> None:
+                    nonlocal clientToServerDeque
+                    clientToServerDeque.append(message)
 
-            def serverToClientHook(self, response: bytearray) -> None:
-                self.serverToClientDeque.append(response)
+            class ServerToClientHook(StreamInterceptor.Hook):
+                def __call__(self, message: bytes) -> None:
+                    nonlocal serverToClientDeque
+                    serverToClientDeque.append(message)
 
-        return mockStreamInterceptor
+        return mockStreamInterceptor, (clientToServerDeque, serverToClientDeque)
 
     @staticmethod
     def createClientSocket() -> socket.socket:
@@ -82,10 +86,10 @@ class PTTestResources:
         proxyToServerSocket = proxyClientSocket
 
         ## Create ProxyTunnel
-        streamInterceptor = PTTestResources.createMockStreamInterceptor()
+        streamInterceptor, interceptorDeques = PTTestResources.createMockStreamInterceptor()
         pt = ProxyTunnel(clientToProxySocket, proxyToServerSocket, streamInterceptor)
         hopList = [clientSocket, clientToProxySocket, proxyToServerSocket, ephemeralServerSocket]
-        return pt, hopList
+        return pt, hopList, interceptorDeques
 
     @staticmethod
     def _closePT(socketList: List[socket.socket]) -> None:

@@ -12,12 +12,13 @@ sys.path.insert(0, os.path.join("..", "src"))
 sys.path.insert(0, "src")
 sys.path.insert(0, "testhelper")
 
-from testhelper.ThreadedEchoServer import EchoServer
 
 from tcp_proxyserver import ProxyConnections, TCPProxyServer
 from _exceptions import *
 from _proxyDS import StreamInterceptor, Buffer
-from testhelper.TestResources import PTTestResources
+
+from tests.testhelper.ThreadedEchoServer import EchoServer
+from tests.testhelper.TestResources import PTTestResources
 
 
 class TPSTestResources:
@@ -61,7 +62,7 @@ class TPSTestResources:
         assert server.PORT == PORT
         assert server.PROXY_HOST == PROXY_HOST
         assert server.PROXY_PORT == PROXY_PORT
-        assert server.streamInterceptor == interceptor
+        assert server.streamInterceptorType == interceptor
         assert isinstance(server.selector, selectors.DefaultSelector)
 
         ## Depends if we want to be strict
@@ -153,10 +154,19 @@ class TPSTestResources:
             assert peerAddress[1] == proxyServer.PROXY_PORT
             
 
+    ##
     @classmethod
-    def assertUserConnectionData(cls, connections: List[socket.socket], connectionData: List[bytes]) -> None:
+    def assertUserConnectionData(cls, streamInterceptorType, connections: List[socket.socket], connectionData: List[bytes]) -> None:
         ## We want to check that the expected data has been received
-        for conn, expectedData in zip(connections, connectionData):
+        delimiter = streamInterceptorType.MESSAGE_DELIMITERS[0]
+        for conn, sentData in zip(connections, connectionData):
+
+            index = sentData.rfind(delimiter)
+            if index == -1:
+                expectedData = b""
+            else:
+                expectedData = sentData[:index + len(delimiter)]
+
             socketData = bytearray()
             while True:
                 ## NOTE: Avoids race conditions and ensures socket has the entire 
@@ -196,7 +206,7 @@ class TPSTestResources:
         ## -- It's possible to define multiple delimiters
         ## Our check will compare with a single run of the buffer on flat data
         ## --> i.e. instead of multiple chunks, a single chunk is sent
-        flatBuffer = Buffer(testBuffer.REQUEST_DELIMITERS)
+        flatBuffer = Buffer(testBuffer.MESSAGE_DELIMITERS)
         flatBuffer.write(testData)
 
         ## And then we will manually compare state between both buffers
@@ -206,9 +216,9 @@ class TPSTestResources:
         # print(flatBuffer)
         # print(testBuffer, end="\n\n")
 
-        assert flatBuffer._requests == testBuffer._requests ## The remaining requests should be the same
+        assert flatBuffer._messages == testBuffer._messages ## The remaining requests should be the same
         # assert flatBuffer._data == testBuffer._data ## The data is likely not the same (since the flatBuffer is never popped from)
         assert flatBuffer._MAX_BUFFER_SIZE == testBuffer._MAX_BUFFER_SIZE
         assert flatBuffer.MAX_DELIMETER_LENGTH == testBuffer.MAX_DELIMETER_LENGTH
-        assert flatBuffer.REQUEST_DELIMETER_REGEX == testBuffer.REQUEST_DELIMETER_REGEX
+        assert flatBuffer.MESSAGE_DELIMITER_REGEX == testBuffer.MESSAGE_DELIMITER_REGEX
 

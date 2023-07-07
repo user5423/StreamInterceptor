@@ -35,7 +35,7 @@ class EchoServer:
                         conn, addr = serverSock.accept()
                     except BlockingIOError:
                         continue
-
+                    
                     self._instantiateNewThread(conn)
                     self._updateCounterEvent(1)
             except Exception as e:
