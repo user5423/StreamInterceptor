@@ -4,7 +4,7 @@ import types
 import inspect
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Callable, Iterable, List, NamedTuple, Sequence, Tuple, Any
+from typing import Callable, Iterable, List, NamedTuple, Sequence, Tuple, Any, Union
 
 from _exceptions import *
 proxyHandlerDescriptor = NamedTuple("ProxyHandlerData", [("PROXY_HOST", str), ("PROXY_PORT", int), ("StreamInterceptor", object)])
@@ -15,18 +15,17 @@ proxyHandlerDescriptor = NamedTuple("ProxyHandlerData", [("PROXY_HOST", str), ("
 ## NOTE: This should be performed on a per protocol basis!!!
 class StreamInterceptor:
     ## NOTE: This needs to rewrite any requests to the real server
-    @staticmethod
-    def clientToServerHook(buffer: "Buffer", requestChunk: bytes) -> None:
-        raise NotImplementedError
 
-    ## NOTE: This needs to rewrite any responses back to the client
-    @staticmethod
-    def serverToClientHook(buffer: "Buffer", responseChunk: bytes) -> None:
-        raise NotImplementedError
+    class Hook:
+        def __init__(self, buffer: "Buffer" = None):
+            self.buffer = buffer
 
+        def __call__(self, chunk: bytes) -> Any:
+            raise NotImplementedError
 
-## The Buffer needs to be rewritten
-## - It needs to be **aware** of the higher-level layer 7 messages
+    class ClientToServerHook(Hook): ...
+
+    class ServerToClientHook(Hook): ...
 
 
 ## BUG: There exist methods that manipulate both buffer._data and buffer._messages
@@ -40,21 +39,36 @@ class StreamInterceptor:
 ## --> any data previous to the received argument chunk should not be retrieved
 ## directly using buffer._data
 
+## TODO: We will rewrite this Buffer so that it has the functionality to be non-transparent
+## - We will have two new values _incomingData, and _outgoingData,
+## - The pop() and read() methods will read from _outgoingData,
+## - The write() method will write to _incomingData
+## ==> write() will exec a method _execMessageParsing() which
+##      - splits up messages (if necessary) - already done
+##      - executes a processing and user hook on each of the parsed messages - already done
+##          - These hooks need to be modified to allow manipulation of data!
+##          - The processing hook should be used to manipulate
+##      - when popping() from the message queue, we need to write this to _outgoingData - NOT Done
+
+
+## TODO: Fix mixing between bytearray and byte types!!!
+
 @dataclass
 class Buffer:
     MESSAGE_DELIMITERS: List[bytes] = field(init=True)
-    _data: bytearray = field(init=False, default_factory=bytearray)
-    _prevEndBuffer: bytearray = field(init=False, default_factory=bytearray)
-    _messages: deque = field(init=False, default_factory=deque)
+    _incomingData: bytearray = field(init=False, default_factory=bytearray)
+    _outgoingData: bytearray = field(init=False, default_factory=bytearray)
+    _messages: deque[bytes] = field(init=False, default_factory=deque)
     _releasableBytes: int = sys.maxsize ## As long as _releasableBytes is larger than _MAX_BUFFER_SIZE, then any integer value should be ok
     _MAX_BUFFER_SIZE: int = 1024 * 128 ## 128Kb
-    _processingHook: Callable[[bytes], bool] = lambda message: True
-    _userHook: Callable[[bytes], None] = lambda message: None
+    _nonTransparentHook: Callable[[bytes], Union[bytes, bool]] = lambda message: message
+    _transparentHook: Callable[[bytes], None] = lambda message: None
 
     def __post_init__(self):
         self._validateDelimiters()
         self.MESSAGE_DELIMITER_REGEX: str = b"(" + b"|".join(self.MESSAGE_DELIMITERS) + b")"
         self.MAX_DELIMETER_LENGTH = max([len(delimiter) for delimiter in self.MESSAGE_DELIMITERS])
+
 
     def _validateDelimiters(self) -> None:
         """Validates that the delimiters are a list of bytestrings"""
@@ -73,152 +87,103 @@ class Buffer:
             
         return None
     
+
     ############### Bytes Operations #######################
     def read(self, count: int = 0) -> bytes:
         """This reads bytes from the intercepted data stream
-        `buffer()._data` (without popping)"""
+        `buffer()._incomingData` (without popping)"""
         ## With the FTP proxy server, we want to slow-down replies (to force ordering)
         ## Therefore, we might read less bytes than anticipated
-        ## We will still read from _data, but we perform self._data[:min(count, self._releasable)]
+        ## We will still read from _incomingData, but we perform self._incomingData[:min(count, self._releasable)]
         ## This self._releasable enables proxies handlings protocols greater than L4 to slow the flow
         if count < 0:
-            return self._data
-        return self._data[:min(count, self._releasableBytes)]
+            return self._outgoingData
+        return self._outgoingData[:min(count, self._releasableBytes)]
 
 
     def pop(self, count: int = 0) -> bytes:
         """This pops bytes from the intercepted data stream
-        buffer `buffer()._data` (from the left)"""
+        buffer `buffer()._outgoingData` (from the left)"""
         if count < 0:
-            count = len(self._data)
+            count = len(self._outgoingData)
         ret = self.read(min(count, self._releasableBytes))
-        del self._data[:min(count, self._releasableBytes)]
+        del self._outgoingData[:min(count, self._releasableBytes)]
         return ret
 
 
     def write(self, chunk: bytearray) -> None:
         """Writes the received chunk to a intercepted data
-        stream buffer - `buffer()._data`"""
-        self._data += chunk
-        self._execMessageParsing(chunk)
+        stream buffer - `buffer()._outgoingData`"""
+        self._incomingData += chunk
+        self._execMessageParsing()
+        ## NOTE: In the future, we may want to provide an alternative method called _execStreamParsing()
+        ## - This allows library users to bypass forcing parsing of streams into messages
 
 
     ############## Message Queue Operations ########################
-    def pushToQueue(self, data: bytearray, delimited: bool) -> None:
+    def pushToQueue(self, data: bytearray) -> None:
         """Pushes data as a currently parsed or a new message onto
         the message queue `buffer()._messages`"""
         ## NOTE: Added copies in case bytearray "data" is used in other manipulation
         ## if the messages queue is empty
-        if len(self._messages) == 0:
-            self._messages.append([data[:], delimited])
-            return None
-
-        ## if the messages queue is non-empty
-        if self._messages[-1][1]:
-            self._messages.append([data[:], delimited])
-        else:
-            self._messages[-1][0] += data
-            self._messages[-1][1] = delimited
+        self._messages.append(data[:])
         return None
         
 
-    def popFromQueue(self) -> Tuple[bytearray, bool]:
+    def popFromQueue(self) -> bytearray:
         """This pops a complete message from the bottom of the queue 
         (if a complete message exists)"""
         if not len(self._messages):
             raise PopFromEmptyQueueError()
-        elif self._messages[0][1] is False:
-            raise PopUndelimitedItemFromQueueError()
-
         return self._messages.popleft()
 
 
-    def peakFromQueue(self) -> Tuple[bytearray, bool]:
+    def peakFromQueue(self) -> bytearray:
         """This peaks the message (complete/incomplete) at the top of
         the queue"""
         if not len(self._messages):
             raise PeakFromEmptyQueueError()
-        
         return self._messages[-1]
 
-
-    ### Hooks
-        
-    def _execMessageParsing(self, chunk: bytearray) -> None:
-        """This is a hook that executes whenever a new chunk has 
-        been received"""
-        ## NOTE: In here, we are able to split up the streams/chunks into messages
-
-        offset = len(self._prevEndBuffer)
-        chunk = self._prevEndBuffer + chunk
-
-        ## NOTE: Great potential for optimization here
-        ## --> This only works if the list of strings are ordred
-        ## --> e.g. if an expression is encapsulating, then `\r\n` must come before `\r`
-        ## BUG: There are unexplored cases that the below search would likely fail
-        ## --> e.g. overlapping strings potentially:??
-        ## TODO: Re-evaluate the search mechanism for correctness
-        delimiters = [m.end() for m in re.finditer(self.MESSAGE_DELIMITER_REGEX, chunk)]
-
-        ## If multiple delimeters were found in the chunk, then
-        ## -- only the first message can be over multiple chunks
-        ## -- the rest that have delimeters are not spread over multiple chunks
-        ## -- the final piece of the chunk that has no delimeter can be spread over
-        ##      --> this will be case 1 when the next chunk is recv()
-
-        ## NOTE: It is important to take care of the index pointers
-        ## -- as we pop from the buffer to send it to the target destination
-        ## --> We need to readjust the pointer
-        leftIndex = offset
-        ## NOTE: The delimiter m.end() returns the char of index + 1 at the end of the search
-        ## -- e.g. message\r\nhello would return the index of "h" after \r\n
+    ############ Message Parsing and Hook Mechanisms ################
+    def _execMessageParsing(self):
+        ## Split up incoming data buffer into messages onto a queue
+        delimiters = [m.end() for m in re.finditer(self.MESSAGE_DELIMITER_REGEX, self._incomingData)]
+        leftIndex = 0
         for index in delimiters:
-            ## we have the offset stored that we subtract
             rightIndex = index
-            ## we store the substring into the queue
-            self.pushToQueue(chunk[leftIndex:rightIndex], True)
-            ## we update the leftIndex
+            self.pushToQueue(self._incomingData[leftIndex:rightIndex])
             leftIndex = rightIndex
 
-        ## If there is any remaining piece of the chunk that isn't delimited
-        if (len(chunk) - leftIndex) > 0:
-            self.pushToQueue(chunk[leftIndex:], False)
-            ## We then need to update the buffer (if the chunk is NOT complete (i.e. not delimited))
-            ## NOTE: The buffer max size is MAX_DELIMITER_LEN - 1
-            self._prevEndBuffer = chunk[max(len(chunk) - self.MAX_DELIMETER_LENGTH + 1, 0) :len(chunk)]
-        else:
-            self._prevEndBuffer = bytearray()
+        ## Remove data that was parsed into messages on a queue (data will flow from the queue to Buffer._outgoingData)
+        self._incomingData = self._incomingData[leftIndex:]
 
-        ## At this point we must have SOMETHING in the queue
-        ## All elements below the top have been delimited, so we can pass it to the messageHook
-        while len(self._messages) - 1:
-            message, _ = self._messages[0]
+        ## Execute hooks on each message on this queue (all messages are delimited on this queue)
+        for _ in range(len(self._messages)):
+            message = self._messages[0]
             ## we execute the message hook
-            if self._executeHooks(message):
+            modifiedMessage, continueProcessing = self._executeHooks(message)
+            if continueProcessing:
                 ## we pop the message from queue
-                message, _ = self._messages.popleft()
+                self._messages.popleft()
+                ## we write it to the outgoing byte stream
+                self._outgoingData += modifiedMessage
             else:
-                ## if we receive False returned from _processingHook, we stop processing future messages 
-                return None
-
-        ## The top element isn't guaranteed to be finished
-        ## --> Therefore we need to determine if it has been delimited
-        message, isDelimited = self.peakFromQueue()
-        if isDelimited:
-            ## we execute the message hook
-            if self._executeHooks(message):
-                ## we pop the message from queue
-                message, _ = self._messages.popleft()
-
+                ## otherwise we stop processing and sending out messages
+                break
+        
         return None
 
-    def _executeHooks(self, message) -> bool:
-        if self._executeHook(self._processingHook, message) is False:
-            return False
-        self._executeHook(self._userHook, message)
+    def _executeHooks(self, message) -> Tuple[Optional[bytes], bool]:
+        continueProcessing = False
+        modifiedMessage = self._executeHook(self._nonTransparentHook, message)
+        if modifiedMessage is None:
+            return modifiedMessage, continueProcessing
+        self._executeHook(self._transparentHook, message)
         ## True means execute userHook on message and continue
         ## to execute hooks on subsequent messages in the queue
-        return True
+        continueProcessing = True
+        return modifiedMessage, True
 
 
     def _executeHook(self, hook: Callable, message: bytes) -> Any:
@@ -264,26 +229,24 @@ class Buffer:
     ## NOTE: It is possible that the hook provided is a wrapper to a shared method, function, generator or functor used by multiple buffers
     ## e.g. both buffers in a tunnel can share underlying callables.
 
-    def setProcessingHook(self, hook: Callable[["Buffer"], None]) -> None:
+    def setNonTransparentHook(self, hook: Callable[["Buffer"], None]) -> None:
         """ This message hook returns true if the message should be consumed in the buffer, otherwise
         if it returns false, then the current message is not processed and neither are future messages.
         This works well for protocols that we wish to install hooks that benefit from forcing ordering of messages being sent
         NOTE: Depending on the protocols we end up supporting, we may need to redesign this system."""
-        ## Method that should be overriden / set depending on protocol
-        self._processingHook = hook(buffer=self)
+        self._nonTransparentHook = hook(buffer=self)
         ## If it is a generator, we need to execute a single next() statement before we can perform .send() later
         ## This essentially execute the setup code which would correspond to __init__() in a functor
-        if isinstance(self._processingHook, types.GeneratorType):
-            next(self._processingHook)
+        if isinstance(self._nonTransparentHook, types.GeneratorType):
+            next(self._nonTransparentHook)
         return None
 
-
-    def setUserHook(self, hook: Callable[["Buffer"], None]) -> None:
+    def setTransparentHook(self, hook: Callable[["Buffer"], None]) -> None:
         """This adds a message hook which is executed whenever a message is completely parsed from
-        the message queue AND  is allowed by the protocol hook (which may order replies and responses
-        between the client and server, that is conducive for programming with user Hooks)"""
+        the message queue AND  is allowed by the transparent hook (which may order replies and responses
+        between the client and server and manipulate incoming/outgoing data"""
         ## TODO: Find a better way to bind the hook function to this self obj instance
-        self._userHook = hook(buffer=self)
-        if isinstance(self._userHook, types.GeneratorType):
-            next(self._userHook)
+        self._transparentHook = hook(buffer=self)
+        if isinstance(self._transparentHook, types.GeneratorType):
+            next(self._transparentHook)
         return None
