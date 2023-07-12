@@ -15,7 +15,7 @@ class FTPProxyInterceptor(StreamInterceptor, metaclass=ABCMeta):
         self._requestQueue = collections.deque()
         self._responseQueue = collections.deque()
         self._stateGenerator = self._createStateGenerator()
-        self.REQUEST_DELIMITERS = [b"\r\n", b"\r"]
+        self.MESSAGE_DELIMITERS = [b"\r\n", b"\r"]
 
     ## NOTE: These methods assume that the there is at least one delimited reqeust in buffer
     ## NOTE: These methods assume that the correct buffer has been passed as an argument

@@ -6,7 +6,7 @@ import signal
 import socket
 import sys
 import threading
-from typing import Tuple, List, Dict, Callable, Generator
+from typing import Tuple, List, Dict, Callable, Generator, Optional, Union
 import pytest
 import psutil
 import errno
@@ -16,10 +16,8 @@ import queue
 import datetime
 import math
 
-from tests.testhelper.TCPProxyServer import TPSTestResources
 from tests.testhelper.DataTransferSimulator import DataTransferSimulator
-from tests.testhelper.TestResources import PTTestResources
-
+from tests.testhelper.TestResources import PTTestResources,TPSTestResources
 
 sys.path.insert(0, os.path.join("..", "src"))
 sys.path.insert(0, "src")
@@ -353,7 +351,7 @@ class Test_ProxyServer_Termination:
 
 
 class Test_ProxyServer_connectionDataHandling:
-    def _assertConnectionHandling(self, echoServer, proxyServerThreadWrapper, proxyServerArgs, connectionsToCreate, dataTransferArgs):
+    def _assertConnectionHandling(self, echoServer, proxyServerThreadWrapper, proxyServerArgs, connectionsToCreate, dataTransferArgs, dtsTimeout: Optional[Union[int, float]] = None):
         ## Setting up
         proxyServer = proxyServerThreadWrapper.proxyServer
 
@@ -366,7 +364,7 @@ class Test_ProxyServer_connectionDataHandling:
         connectionData = DataTransferSimulator.sendMultiConnMultiMessage(connections, **dataTransferArgs)
 
         ## we then wait until each user socket has data (which means that data has propagated through proxy server)
-        DataTransferSimulator._awaitRoundaboutConnection(connections)
+        DataTransferSimulator._awaitRoundaboutConnection(connections, dtsTimeout)
         ## Assertions
         try:
             ## we should check the following
@@ -400,7 +398,7 @@ class Test_ProxyServer_connectionDataHandling:
         isEndDelimited = False
         chunkCountRange = (1, 1) ## chunk count must be >= 1
 
-        completeConnSender = DataTransferSimulator.createRandomConnSender(dataSizeRange, messageCountRange, chunkCountRange, delimiterList, isEndDelimited, testTimeRange)
+        completeConnSender = DataTransferSimulator.createRandomConnSender(dataSizeRange, messageCountRange, chunkCountRange, delimiterList, isEndDelimited, testTimeRange, dtsTimeout=0.0)
         dataTransferArgs = {"completeConnSender": completeConnSender}
         self._assertConnectionHandling(echoServer, proxyServerThreadWrapper, proxyServerArgs, connectionsToCreate, dataTransferArgs)
 
@@ -509,7 +507,7 @@ class Test_ProxyServer_connectionDataHandling:
         isEndDelimited = False
         chunkCountRange = (1, 1) ## chunk count must be >= 1
 
-        completeConnSender = DataTransferSimulator.createRandomConnSender(dataSizeRange, messageCountRange, chunkCountRange, delimiterList, isEndDelimited, testTimeRange)
+        completeConnSender = DataTransferSimulator.createRandomConnSender(dataSizeRange, messageCountRange, chunkCountRange, delimiterList, isEndDelimited, testTimeRange, dtsTimeout=0.0)
         dataTransferArgs = {"completeConnSender": completeConnSender}
 
         self._assertConnectionHandling(echoServer, proxyServerThreadWrapper, proxyServerArgs, connectionsToCreate, dataTransferArgs)

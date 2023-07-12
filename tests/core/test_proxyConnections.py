@@ -19,8 +19,8 @@ class PCTestResources:
     def _assertValidInitialization(cls, pc, PROXY_HOST, PROXY_PORT, selector) -> None:
         assert pc.PROXY_HOST == PROXY_HOST
         assert pc.PROXY_PORT == PROXY_PORT
-        assert StreamInterceptor in pc.streamInterceptor.__mro__
-        assert pc.streamInterceptor.__mro__[0] != StreamInterceptor
+        assert StreamInterceptor in pc.streamInterceptorType.__mro__
+        assert pc.streamInterceptorType.__mro__[0] != StreamInterceptor
         assert pc.selector == selector
 
     @classmethod

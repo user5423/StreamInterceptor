@@ -4,7 +4,7 @@ import random
 import datetime
 import string
 
-from typing import List, Callable, Optional, Tuple
+from typing import List, Callable, Optional, Tuple, Union
 
 class DataTransferSimulator:
     @classmethod
@@ -163,10 +163,14 @@ class DataTransferSimulator:
 
 
     @classmethod
-    def _awaitRoundaboutConnection(cls, connections: List[socket.socket]) -> None:
+    def _awaitRoundaboutConnection(cls, connections: List[socket.socket], timeout: Optional[Union[int, float]]) -> None:
         for conn in connections:
             conn.setblocking(True) ## we block so that we can let other threads work
-            conn.recv(1024, socket.MSG_PEEK) ## peeks at data without consuming it
+            conn.settimeout(timeout)
+            try:
+                conn.recv(1024, socket.MSG_PEEK) ## peeks at data without consuming it
+            except socket.timeout:
+                print("Socket Timeout Error - Continuing test...")
             conn.setblocking(False)
 
 

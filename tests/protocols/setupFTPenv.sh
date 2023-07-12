@@ -4,9 +4,11 @@ set -e
 ## SI = StreamInterceptor
 
 FTP_GROUP='SI_FTPTestGroup'
+export FTP_GROUP
 
 ## Currently only one FTP_USER
 FTP_USER='SI_FTPTestUser1'
+export FTP_USER
 
 FTP_PASSWORD_LENGTH=20
 
@@ -32,6 +34,7 @@ else
     
     SI_FTP_PASSWORD=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c $FTP_PASSWORD_LENGTH 2>/dev/null)
     export SI_FTP_PASSWORD
+    
     mkdir -p /var/ftp
     sudo useradd -m -d "/var/ftp/$FTP_USER" -g "$FTP_GROUP" -c "FTP Test Account for StreamInterceptor Project" $FTP_USER
     echo -e "$SI_FTP_PASSWORD\n$SI_FTP_PASSWORD" | sudo passwd "$FTP_USER"
@@ -48,3 +51,5 @@ else
     service vsftpd start
     echo "Started vsftpd service"
 fi
+
+set +e
