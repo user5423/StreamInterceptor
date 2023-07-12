@@ -1,9 +1,11 @@
 import re
 import logging
+import selectors
 import collections
-from typing import Optional, Tuple, Dict, Generator
+from typing import Optional, Tuple, Dict, Generator, FrozenSet
 
 from _proxyDS import StreamInterceptor, Buffer
+from tcp_proxyserver import TCPProxyServer
 
 from abc import abstractmethod, ABCMeta
 
@@ -319,6 +321,248 @@ class FTPLoginProxyInterceptor(FTPProxyInterceptor):
         ret = re.search("^ACCT (\w+)(\r\n|\r)", request)
         return ret.groups()[0]
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+## We set a transparent proxy hook for each control connection to create and register a data connection
+
+class FTPConnectionSetup:
+    _dataTransferCommands: FrozenSet[bytes] = frozenset({b"RETR", b"STOR", b"STOU", b"APPEND", b"LIST", b"NLST"})
+    _abortCommand: bytes = b"ABOR"
+    # _ephemeralToServerPasv: Dict[Tuple, Tuple] = field(init=False, default_factory=dict)
+    # _controlConnectionMessageQueue: Dict[socket.socket, bytes] = field(init=False, default_factory=dict)
+
+
+    ## TODO: This currently only works for IPv4, add functionality for IPv6
+    ## NOTE: This only works for vsftpd conf option: port_promiscous (which is NO by default)
+    ## -- port_promiscuous=YES can result in a FTP port bounce attack that allows attackers to footprint using PORT command
+    ## NOTE: Incredibly important to only enable IPv4 and disable IPv6 for vsftpd.conf
+    def _validatePORTArgs(self, controlProxyTunnel: ProxyTunnel, portCommand: bytes) -> None:
+        """This assumes that the arg"" 'portCommand' starts with PORT but makes no other assumptions"""
+        portArgs = re.search(b"^PORT (\d+),(\d+),(\d+),(\d+),(\d+),(\d+)\r\n")
+        unprivilegedPortLowerBound = 1024 ## lowest Port number that FTP allows (inclusive)
+        unprivilegedPortUpperBound = 65535 ## highest Port number that FTP allows (inclusive)
+
+        if portArgs is None:
+            return None, None
+
+        ipAddress = ",".join(portArgs.group(0,1,2,3))
+        try:
+            ## Passing it through ipaddress.ip_address validates the _ipAddress string and raises ValueError if not a valid IPv4 or IPv6
+            ipaddress.ip_address(ipAddress)
+            
+            ## NOTE: This stops FTP port bouncing attack
+            ## TODO: We need to replace this by dynamically reading from a config file on program startup before deciding to do this.
+            if currentTunnel.clientToProxySock.getpeername()[0] != ipAddress:
+                return None, None
+            
+        except ValueError:
+            return None, None
+
+        ## Each port arg cannot exceed 256 (and cannot be negative)
+        if not (0 <= portArgs.group(4) < 256) or not(0 <= portArgs.group(5) < 256):
+            return None, None
+
+        port = 256 * int(portArgs.group(4)) + int(portArgs.group(5))
+
+        ## We exclude privileged port from valid port ranges
+        if not(unprivilegedPortLowerBound <= port <= unprivilegedPortUpperBound):
+            return None, None
+
+        return ipAddress, port
+
+    def _updateDataConnectionInfo(self,currentDataConnectionInfo, dataConnType, clientIP, clientPort, clientToProxyIP, 
+                                clientToProxyPort, proxyToServerIP, proxyToServerPort, serverIP, serverPort) -> None:
+        currentDataConnectionInfo["connectionType"] = dataConnType
+        currentDataConnectionInfo["clientIP"] = clientIP
+        currentDataConnectionInfo["clientPort"] = clientPort
+        currentDataConnectionInfo["clientToProxyIP"] = clientToProxyIP
+        currentDataConnectionInfo["clientToProxyPort"] = clientToProxyPort
+        currentDataConnectionInfo["proxyToServerIP"] = proxyToServerIP
+        currentDataConnectionInfo["proxyToServerPort"] = proxyToServerPort
+        currentDataConnectionInfo["serverIP"] = serverIP
+        currentDataConnectionInfo["serverPort"] = serverPort
+                
+
+    ## TODO: We need to handle blocking connection handling mechnaisms!!!
+    ## TODO: Ensure ephemeral sockets are cleanedup
+    ## TODO: Ensure any other resources are also cleanedup appropritately (and periodically if need be)
+    ## TODO: Remove unnecessary references to ftpProxyServer and stick it into a mixin
+    ## This dataConnectionSetup generator is called by ClientToServer  (req)and ServerToClient (resp)
+    def ftpDataConnectionSetup(self, ftpProxyServer: "FTPProxyServer", controlProxyTunnel: "ProxyTunnel", buffer: Buffer) -> Generator[Optional[bool], Tuple[Optional[bytes], Optional[bytes]], None]:
+        """
+        This is a generator that handles data connection creation, maintainance, and teardown for a client proxy session.
+        This should be set as a hook on each tunnel that corresponds to a FTP control connection
+        This generator is called using the arguments (req, resp) which are complete delimited FTP requests and responses respectively
+        This generator responds with a boolean that tells the tunnel that invoked this handler to either pass on the message (i.e. requests, )
+        """
+
+        ## NOTE: Here we store data about the current data connection (if it exists)
+        ## In case the user is able to query about the FTP server status / data connection, this should help when modifying the response.
+        currentDataConnectionInfo = {}
+        serverIP = controlProxyTunnel.proxyToServerSock.getpeername()[0]
+        serverPort = controlProxyTunnel.proxyToServerSock.getpeername()[1]
+
+        message = False
+        while True:
+            req, resp = yield message
+
+            ## If we have received a request:
+            if req is not None:
+                ## We start by checking if the port command was issued
+                requestCommand = re.search(b"^\w+", req)
+
+                if requestCommand is not None or requestCommand.group(0) != b"PORT":
+                    ## If the request is completely malformed, or it is not a PORT command, we relay it to the server
+                    message = req
+                    continue
+
+                ## We then validate and extract endpoint args from the PORT command
+                clientIP, clientPort = self._validatePORTArgs(controlProxyTunnel, req)
+                if clientIP is False:
+                    ## This was an invalid PORT command, so we short circuit the server and so we don't send anything to it i.e. ""
+                    ## and we reply directly to the client by sending the 
+                    controlProxyTunnel.serverToClientBuffer.write(b"500 Illegal PORT command.\r\n")
+                    message = b""
+                    ## We then restart to the top of the while loop
+                    continue
+
+                ## Assuming valid PORT command, we 1) connect to the client, 2) we setup an ACTIVE port locally, 3) we send our own PORT command to the client
+                ## TODO: The client could be an adversary so we need to make sure that this is not blocking
+                activeClientToProxySock = self._createConnectionToHost(clientIP, clientPort)
+                if activeClientToProxySock is None:
+                    ## NOTE: THe RFC says PORT should send a 421 reply, but vsftpd sends a 425 instead
+                    controlProxyTunnel.serverToClientBuffer.write(b"425 Failed to establish connection.")
+                    ## We then restart to the top of the while loop
+                    message = b""
+                    continue
+
+                ## We store endpoint address information for later
+                clientToProxyIP, clientToProxyPort = activeClientToProxySock.getsockname()
+
+                ## At this point, we've connected succesfully to the client's PORT location
+                ## We now 1) create an active port, and 2) issue a PORT command to the server
+                ## TODO: We need to be able to specify the interface for the ephemeral server socket.
+                activeProxyToServerSock = self._setupEphemeralServerSocket()
+                proxyToServerIP, proxyToServerPort = activeProxyToServerSock.getsockname()
+                proxyPortCommand = bytes("PORT " + ",".join(proxyToServerIP) + ","  + str(proxyToServerPort // 256) + "," + str(proxyToServerPort % 256) + "\r\n")
+                controlProxyTunnel.clientToServerBuffer.write(proxyPortCommand)
+
+                ## We have sent the command to the server, so now we want to wait on the reply of the server
+                message = proxyPortCommand
+                
+                while True:
+                    req, resp = yield message
+                    ## If we receive a request unexpectedly from the client, we tell the proxyTunnel to not forward the data yet
+                    ## This means we sequentialize the order in the format required by ftp but for the proxy server
+                    ## This makes it easier for additional hooks to have this serial assumption which makes it easier to code with
+                    if resp is None:
+                        message = False
+                    else:
+                        ## NOTE: At any point in the ftp connection, the server can send unqueried messages (which is why we loop until we get the right one)
+                        responseCode = re.search(b"^\d+", resp)
+
+                        ## This condition should never equate to true! Every reply should have a response code
+                        if responseCode is None:
+                            ## TODO: Add logging/exception handling here for potential later debugging
+                            message = False
+                            continue
+
+                        ## We now check to ensure that the code is 200 -(OK command)
+                        if responseCode.group(0) == b"200":
+                            ## And we finally break
+                            break
+
+                
+                ## NOTE We have succesfully setup a ACTIVE connection!
+
+                ## We then update the 'currentDataConnection' information for future needs
+                self._updateDataConnectionInfo(currentDataConnectionInfo, "ACTIVE", clientIP, clientPort, clientToProxyIP, 
+                                            clientToProxyPort, proxyToServerIP, proxyToServerPort, serverIP, serverPort)
+                
+                ## we then loop back to the top of the while loop
+                message = resp
+                continue
+                
+            ## If we have received a response:
+            if resp is not None:
+                ## we check if the response is of the expected ftp structure
+                pasvReplyCode = re.search(b"^\d+", resp)
+                if pasvReplyCode is None or pasvReplyCode != b"227":
+                    message = resp
+                    continue
+
+                ## We then extract the arguments
+                serverIP, serverPort = self._validatePASVargs(resp)
+                # pasvArgs = re.search(b"^227 (\d+),(\d+),(\d+),(\d+),(\d+),(\d+)\r\n", resp)
+                
+                ## NOTE: This if block can only be triggered if the ftp server provides an invalid response (unlikely)
+                if serverIP is None:
+                    message = resp
+                    continue
+                
+                ## We setup an ephemeral socket for the client to connect to
+                pasvClientToProxyEphemeralSock = self._setupEphemeralServerSocket()
+                pasvClientToProxyEphemeralSock.setblocking(False)
+                clientToProxyIP, clientToProxyPort = pasvClientToProxyEphemeralSock.getsockname()
+
+                ## We send a PASV response that replaces the one we received from the server
+                pasvResponse = bytes("PASV " + ",".join(clientToProxyIP) + "," + str(clientToProxyPort // 256) + "," + str(clientToProxyPort % 256))
+                message = pasvResponse
+
+
+                while True:
+                    req, resp = yield message
+                    
+                    ## before each subsequent data command request, we check if the client has connected
+                    if req is not None:
+                        ## NOTE: We do not use selectors because, this could mean that the server could perform a Slow Loris on the connect and cause the server to block
+                        requestCommand = re.search(b"^\w+", req)
+                        ## TODO: What about abort command?
+                        if requestCommand is None or requestCommand.group(0) not in self._dataTransferCommands:
+                            message = req
+                            continue
+
+                        ## At this point, we are about to relay a data transfer command from the client to the server
+                        try:
+                            pasvClientToProxySock = pasvClientToProxyEphemeralSock.accept()
+                            ## Assuming the client has connected to us, we will now connect to the server
+                            pasvProxyToServerSock = self._createConnectionToHost(serverIP, serverPort)
+                            ## Gather information for later...
+                            proxyToServerIP, proxyToServerPort = pasvProxyToServerSock.getsockname()
+                        except BlockingIOError:
+                            pass
+                        except Exception:
+                            ## TODO: Perform error handling here for pasv for normal blocking error for accept(), and also unexpected blocking exceptions for accept()
+                            pass
+
+                        ## We break out of the loop to send the data transfer command
+                        break
+
+                    ## Otherwise, we received a response
+                    else:
+                        ## in which case we continue through it and go to the top of the for loop
+                        message = resp
+                        continue
+                
+                ## We now update information on the new data connection created
+                self._updateDataConnectionInfo(currentDataConnectionInfo, "ACTIVE", clientIP, clientPort, clientToProxyIP, 
+                                            clientToProxyPort, proxyToServerIP, proxyToServerPort, serverIP, serverPort)
+
+                ## We now send the data transfer command which will be sent once we hit the top of the while loop
+                message = req
+                continue
+        
 
 
 
