@@ -43,6 +43,7 @@ class ProxyTunnel:
         self.serverToClientBuffer.setTransparentHook(self.streamInterceptor.ServerToClientHook)
 
 
+    ## TODO: Rename to 'transferFromSocketToBuffer(...)'
     def readFrom(self, source: socket.socket) -> Optional[int]:
         ## Check if the source socket is associated with the tunnel
         if not (self.clientToProxySocket == source or self.proxyToServerSocket == source):
@@ -61,7 +62,7 @@ class ProxyTunnel:
         buffer.write(data)
         return len(data)
 
-
+    ## TODO: Rename to 'transferFromBufferToSocket(...);
     def writeTo(self, destination: socket.socket) -> Optional[int]:
         ## Check if the source socket is associated with the tunnel
         if not (self.clientToProxySocket == destination or self.proxyToServerSocket == destination):
@@ -98,6 +99,7 @@ class ProxyTunnel:
             return self.serverToClientBuffer
         else:
             raise UnassociatedTunnelSocket(self, socket)
+
 
 
 @dataclass

@@ -429,7 +429,7 @@ class Test_Buffer_Hooks:
     def test_transparentHookFunctor_noParams(self, hookTestResources):
         b, flag, message = hookTestResources
         class UserHook:
-            def __init__(self, buffer=None):
+            def __init__(self, server=None, buffer=None):
                 self.buffer = buffer
 
             def __call__(self, message: bytearray) -> None:
@@ -443,7 +443,7 @@ class Test_Buffer_Hooks:
         b, flag, message = hookTestResources
         args = ("arg1", "arg2")
         class UserHook:
-            def __init__(self, arg1, arg2, buffer=None):
+            def __init__(self, arg1, arg2, server=None, buffer=None):
                 self.arg1 = arg1
                 self.arg2 = arg2
                 self.buffer = buffer
@@ -462,7 +462,7 @@ class Test_Buffer_Hooks:
         kwargs = {"kwarg1": "val1", "kwarg2": "val2"}
 
         class UserHook:
-            def __init__(self, kwarg1=None, kwarg2=None, buffer=None):
+            def __init__(self, kwarg1=None, kwarg2=None, server=None, buffer=None):
                 self.kwarg1 = kwarg1
                 self.kwarg2 = kwarg2
                 self.buffer = buffer
@@ -481,7 +481,7 @@ class Test_Buffer_Hooks:
         kwargs = {"kwarg1": "val1", "kwarg2": "val2"}
         args = ("arg1", "arg2")
         class UserHook:
-            def __init__(self, arg1, arg2, kwarg1=None, kwarg2=None, buffer=None):
+            def __init__(self, arg1, arg2, kwarg1=None, kwarg2=None, server=None, buffer=None):
                 self.arg1 = arg1
                 self.arg2 = arg2
                 self.kwarg1 = kwarg1
@@ -501,7 +501,7 @@ class Test_Buffer_Hooks:
 
     def test_transparentHookGenerator_noParams(self, hookTestResources):
         b, flag, message = hookTestResources
-        def UserHook(buffer=None):
+        def UserHook(server=None, buffer=None):
             nonlocal flag
             while True:
                 message = yield
@@ -515,7 +515,7 @@ class Test_Buffer_Hooks:
         b, flag, message = hookTestResources
         args = ("arg1", "arg2")
         _arg1 = None; _arg2 = None
-        def UserHook(arg1, arg2, buffer=None):
+        def UserHook(arg1, arg2, server=None, buffer=None):
             nonlocal _arg1, _arg2
             _arg1 = arg1; _arg2 = arg2
             nonlocal flag
@@ -532,7 +532,7 @@ class Test_Buffer_Hooks:
         b, flag, message = hookTestResources
         kwargs = {"kwarg1": "val1", "kwarg2": "val2"}
         _kwarg1 = None; _kwarg2 = None
-        def UserHook(kwarg1, kwarg2, buffer=None):
+        def UserHook(kwarg1, kwarg2, server=None, buffer=None):
             nonlocal _kwarg1, _kwarg2
             _kwarg1 = kwarg1; _kwarg2 = kwarg2
             nonlocal flag
@@ -552,7 +552,7 @@ class Test_Buffer_Hooks:
         kwargs = {"kwarg1": "val1", "kwarg2": "val2"}
         _arg1 = None; _arg2 = None
         _kwarg1 = None; _kwarg2 = None
-        def UserHook(arg1, arg2, kwarg1=None, kwarg2=None, buffer=None):
+        def UserHook(arg1, arg2, kwarg1=None, kwarg2=None, server=None, buffer=None):
             nonlocal _arg1, _arg2, _kwarg1, _kwarg2
             _arg1 = arg1; _arg2 = arg2; _kwarg1 = kwarg1; _kwarg2 = kwarg2
             nonlocal flag
@@ -576,7 +576,8 @@ class Test_Buffer_Hooks:
     def test_nonTransparentHookFunctor_noParams(self, hookTestResources):
         b, flag, message = hookTestResources
         class ProcessingHook:
-            def __init__(self, buffer=None):
+            def __init__(self, server=None, buffer=None):
+                self.server = server
                 self.buffer = buffer
 
             def __call__(self, message: bytearray) -> None:
@@ -590,7 +591,7 @@ class Test_Buffer_Hooks:
         b, flag, message = hookTestResources
         args = ("arg1", "arg2")
         class ProcessingHook:
-            def __init__(self, arg1, arg2, buffer=None):
+            def __init__(self, arg1, arg2, server=None, buffer=None):
                 self.arg1 = arg1
                 self.arg2 = arg2
                 self.buffer = buffer
@@ -609,7 +610,7 @@ class Test_Buffer_Hooks:
         kwargs = {"kwarg1": "val1", "kwarg2": "val2"}
 
         class ProcessingHook:
-            def __init__(self, kwarg1=None, kwarg2=None, buffer=None):
+            def __init__(self, kwarg1=None, kwarg2=None, server=None, buffer=None):
                 self.kwarg1 = kwarg1
                 self.kwarg2 = kwarg2
                 self.buffer = buffer
@@ -628,7 +629,7 @@ class Test_Buffer_Hooks:
         kwargs = {"kwarg1": "val1", "kwarg2": "val2"}
         args = ("arg1", "arg2")
         class ProcessingHook:
-            def __init__(self, arg1, arg2, kwarg1=None, kwarg2=None, buffer=None):
+            def __init__(self, arg1, arg2, kwarg1=None, kwarg2=None, server=None, buffer=None):
                 self.arg1 = arg1
                 self.arg2 = arg2
                 self.kwarg1 = kwarg1
@@ -648,7 +649,7 @@ class Test_Buffer_Hooks:
 
     def test_nonTransparentHookGenerator_noParams(self, hookTestResources):
         b, flag, message = hookTestResources
-        def ProcessingHook(buffer=None):
+        def ProcessingHook(server=None, buffer=None):
             nonlocal flag
             while True:
                 message = yield
@@ -662,7 +663,7 @@ class Test_Buffer_Hooks:
         b, flag, message = hookTestResources
         args = ("arg1", "arg2")
         _arg1 = None; _arg2 = None
-        def ProcessingHook(arg1, arg2, buffer=None):
+        def ProcessingHook(arg1, arg2, server=None, buffer=None):
             nonlocal _arg1, _arg2
             _arg1 = arg1; _arg2 = arg2
             nonlocal flag
@@ -680,7 +681,7 @@ class Test_Buffer_Hooks:
         b, flag, message = hookTestResources
         kwargs = {"kwarg1": "val1", "kwarg2": "val2"}
         _kwarg1 = None; _kwarg2 = None
-        def ProcessingHook(kwarg1=None, kwarg2=None, buffer=None):
+        def ProcessingHook(kwarg1=None, kwarg2=None, server=None, buffer=None):
             nonlocal _kwarg1, _kwarg2
             _kwarg1 = kwarg1; _kwarg2 = kwarg2
             nonlocal flag
@@ -699,7 +700,7 @@ class Test_Buffer_Hooks:
         kwargs = {"kwarg1": "val1", "kwarg2": "val2"}
         _arg1 = None; _arg2 = None
         _kwarg1 = None; _kwarg2 = None
-        def ProcessingHook(arg1, arg2, kwarg1=None, kwarg2=None, buffer=None):
+        def ProcessingHook(arg1, arg2, kwarg1=None, kwarg2=None, server=None, buffer=None):
             nonlocal _arg1, _arg2, _kwarg1, _kwarg2
             _arg1 = arg1; _arg2 = arg2; _kwarg1 = kwarg1; _kwarg2 = kwarg2
             nonlocal flag

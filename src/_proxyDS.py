@@ -4,7 +4,7 @@ import types
 import inspect
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Callable, Iterable, List, NamedTuple, Sequence, Tuple, Any, Union
+from typing import Callable, Iterable, List, NamedTuple, Sequence, Tuple, Any, Union, Optional
 
 from _exceptions import *
 proxyHandlerDescriptor = NamedTuple("ProxyHandlerData", [("PROXY_HOST", str), ("PROXY_PORT", int), ("StreamInterceptor", object)])
@@ -17,8 +17,9 @@ class StreamInterceptor:
     ## NOTE: This needs to rewrite any requests to the real server
 
     class Hook:
-        def __init__(self, buffer: "Buffer" = None):
+        def __init__(self, server: Optional["TCPProxyServer"] = None, buffer: Optional["Buffer"] = None):
             self.buffer = buffer
+            self.server = server
 
         def __call__(self, chunk: bytes) -> Any:
             raise NotImplementedError
@@ -52,7 +53,7 @@ class StreamInterceptor:
 
 
 ## TODO: Fix mixing between bytearray and byte types!!!
-
+## TODO: Fix incorrectly assigned methods of being private vs public
 @dataclass
 class Buffer:
     MESSAGE_DELIMITERS: List[bytes] = field(init=True)
@@ -229,24 +230,24 @@ class Buffer:
     ## NOTE: It is possible that the hook provided is a wrapper to a shared method, function, generator or functor used by multiple buffers
     ## e.g. both buffers in a tunnel can share underlying callables.
 
-    def setNonTransparentHook(self, hook: Callable[["Buffer"], None]) -> None:
+    def setNonTransparentHook(self, hook: Callable[["Buffer"], None], server: Optional["TCPProxyServer"] = None) -> None:
         """ This message hook returns true if the message should be consumed in the buffer, otherwise
         if it returns false, then the current message is not processed and neither are future messages.
         This works well for protocols that we wish to install hooks that benefit from forcing ordering of messages being sent
         NOTE: Depending on the protocols we end up supporting, we may need to redesign this system."""
-        self._nonTransparentHook = hook(buffer=self)
+        self._nonTransparentHook = hook(server=server, buffer=self)
         ## If it is a generator, we need to execute a single next() statement before we can perform .send() later
         ## This essentially execute the setup code which would correspond to __init__() in a functor
         if isinstance(self._nonTransparentHook, types.GeneratorType):
             next(self._nonTransparentHook)
         return None
 
-    def setTransparentHook(self, hook: Callable[["Buffer"], None]) -> None:
+    def setTransparentHook(self, hook: Callable[["Buffer"], None], server: Optional["TCPProxyServer"] = None) -> None:
         """This adds a message hook which is executed whenever a message is completely parsed from
         the message queue AND  is allowed by the transparent hook (which may order replies and responses
         between the client and server and manipulate incoming/outgoing data"""
         ## TODO: Find a better way to bind the hook function to this self obj instance
-        self._transparentHook = hook(buffer=self)
+        self._transparentHook = hook(server=server, buffer=self)
         if isinstance(self._transparentHook, types.GeneratorType):
             next(self._transparentHook)
         return None
