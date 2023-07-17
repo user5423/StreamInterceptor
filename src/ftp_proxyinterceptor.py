@@ -2,7 +2,9 @@ import re
 import logging
 import selectors
 import collections
-from typing import Optional, Tuple, Dict, Generator, FrozenSet
+import ipaddress
+import socket
+from typing import Optional, Tuple, Dict, Generator, FrozenSet, Union
 
 from _proxyDS import StreamInterceptor, Buffer
 from tcp_proxyserver import TCPProxyServer
@@ -347,9 +349,9 @@ class FTPConnectionSetup:
     ## NOTE: This only works for vsftpd conf option: port_promiscous (which is NO by default)
     ## -- port_promiscuous=YES can result in a FTP port bounce attack that allows attackers to footprint using PORT command
     ## NOTE: Incredibly important to only enable IPv4 and disable IPv6 for vsftpd.conf
-    def _validatePORTArgs(self, controlProxyTunnel: ProxyTunnel, portCommand: bytes) -> None:
+    def _validatePORTArgs(self, expectedClientIP: "str", portCommand: bytes) -> None:
         """This assumes that the arg"" 'portCommand' starts with PORT but makes no other assumptions"""
-        portArgs = re.search(b"^PORT (\d+),(\d+),(\d+),(\d+),(\d+),(\d+)\r\n")
+        portArgs = re.search(b"^PORT (\d+),(\d+),(\d+),(\d+),(\d+),(\d+)\r\n", portCommand)
         unprivilegedPortLowerBound = 1024 ## lowest Port number that FTP allows (inclusive)
         unprivilegedPortUpperBound = 65535 ## highest Port number that FTP allows (inclusive)
 
@@ -363,7 +365,7 @@ class FTPConnectionSetup:
             
             ## NOTE: This stops FTP port bouncing attack
             ## TODO: We need to replace this by dynamically reading from a config file on program startup before deciding to do this.
-            if currentTunnel.clientToProxySock.getpeername()[0] != ipAddress:
+            if expectedClientIP != ipAddress:
                 return None, None
             
         except ValueError:
@@ -379,6 +381,16 @@ class FTPConnectionSetup:
         if not(unprivilegedPortLowerBound <= port <= unprivilegedPortUpperBound):
             return None, None
 
+        return ipAddress, port
+
+    def _validatePASVargs(self, pasvResponse: bytes) -> Union[Tuple[str, int], Tuple[str, int]]:
+        portArgs = re.search(b"^227 (\d+),(\d+),(\d+),(\d+),(\d+),(\d+)\r\n", pasvResponse)
+        if portArgs is None:
+            return None, None
+
+        ## NOTE: We do not validate the server's pasv IP address or port (TODO)
+        ipAddress = ",".join(portArgs.group(0,1,2,3))
+        port = 256 * int(portArgs.group(4)) + int(portArgs.group(5))
         return ipAddress, port
 
     def _updateDataConnectionInfo(self,currentDataConnectionInfo, dataConnType, clientIP, clientPort, clientToProxyIP, 
@@ -428,7 +440,7 @@ class FTPConnectionSetup:
                     continue
 
                 ## We then validate and extract endpoint args from the PORT command
-                clientIP, clientPort = self._validatePORTArgs(controlProxyTunnel, req)
+                clientIP, clientPort = self._validatePORTArgs(controlProxyTunnel.getpeername()[0], req)
                 if clientIP is False:
                     ## This was an invalid PORT command, so we short circuit the server and so we don't send anything to it i.e. ""
                     ## and we reply directly to the client by sending the 
@@ -453,7 +465,7 @@ class FTPConnectionSetup:
                 ## At this point, we've connected succesfully to the client's PORT location
                 ## We now 1) create an active port, and 2) issue a PORT command to the server
                 ## TODO: We need to be able to specify the interface for the ephemeral server socket.
-                activeProxyToServerSock = self._setupEphemeralServerSocket()
+                activeProxyToServerSock = self._setupEphemeralServerSocket(ftpProxyServer.HOST)
                 proxyToServerIP, proxyToServerPort = activeProxyToServerSock.getsockname()
                 proxyPortCommand = bytes("PORT " + ",".join(proxyToServerIP) + ","  + str(proxyToServerPort // 256) + "," + str(proxyToServerPort % 256) + "\r\n")
                 controlProxyTunnel.clientToServerBuffer.write(proxyPortCommand)
@@ -512,7 +524,7 @@ class FTPConnectionSetup:
                     continue
                 
                 ## We setup an ephemeral socket for the client to connect to
-                pasvClientToProxyEphemeralSock = self._setupEphemeralServerSocket()
+                pasvClientToProxyEphemeralSock = self._setupEphemeralServerSocket(ftpProxyServer.HOST)
                 pasvClientToProxyEphemeralSock.setblocking(False)
                 clientToProxyIP, clientToProxyPort = pasvClientToProxyEphemeralSock.getsockname()
 
@@ -565,6 +577,18 @@ class FTPConnectionSetup:
         
 
 
+    def _setupEphemeralServerSocket(self, HOST: str):
+        s = socket.socket()
+        s.setblocking(False)
+        s.bind((HOST, 0)) ## binds to any available port on self.HOST
+        s.listen()
+        return s
+
+    def _createConnectionToHost(self, PROXY_HOST: str, PROXY_PORT: int) -> socket.socket:
+        s = socket.socket()
+        s.setblocking(False)
+        s.connect((PROXY_HOST, PROXY_PORT))
+        return s
 
 
 ## NOTES ----------------------------------------------------------------------------------------------
