@@ -169,8 +169,9 @@ class DataTransferSimulator:
             conn.settimeout(timeout)
             try:
                 conn.recv(1024, socket.MSG_PEEK) ## peeks at data without consuming it
-            except socket.timeout:
-                print("Socket Timeout Error - Continuing test...")
+            except socket.error:
+                # print("Socket Timeout Error - Continuing test...")
+                pass
             conn.setblocking(False)
 
 

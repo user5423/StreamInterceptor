@@ -255,7 +255,6 @@ class TPSTestResources:
             else:
                 expectedData = sentData[:index + len(delimiter)]
 
-            print(expectedData)
             socketData = bytearray()
             while True:
                 ## NOTE: Avoids race conditions and ensures socket has the entire 
