@@ -7,6 +7,7 @@ import datetime
 import string
 import re
 import collections
+import time
 from typing import List, Callable, Optional, Tuple, Union, FrozenSet, Dict
 
 ## TODO: Have not added 120 vs 220 checks on connection initiation
@@ -205,7 +206,8 @@ class DataTransferSimulator:
 
 
 
-
+## TODO: Cleanup class and naming
+## TODO: Replace basic exceptions with custome one
 class TelnetClientSimulator:
     def _createClientConnection(self, HOST: str, PORT: int) -> socket.socket:
         s = socket.socket()
@@ -220,7 +222,7 @@ class TelnetClientSimulator:
         flattenedCommandSequence = []
 
         for commands in commandSequence:
-            # print(f"commands: {commands}")
+            print(f"commands: {commands}")
             ## We execute a request callback on each command before we send them
             for command in commands:
                 self._requestCallback(command)
@@ -231,6 +233,7 @@ class TelnetClientSimulator:
             flattenedCommandSequence.extend(commands)
 
             clientSock.settimeout(dtsTimeout)
+            messages = []
             while True:
                 ## make this recv mechnaism more robust for below nested for loopnt
                 try:
@@ -253,19 +256,17 @@ class TelnetClientSimulator:
                     responseSequence.extend(messages[:-1])
                     recvBuffer = messages[-1]
 
+            if len(messages) == 0:
+                raise Exception("Did not receive any response from the server")
             
             commandIndex = respondedCommandsCounter
-            # print(f"messages: {messages}")
-            # print(f"buffer: {recvBuffer}")
-            # print(respondedCommandsCounter)
-            # print(responseProccessedCounter)
+            # pprint.pprint(f"responses: {responseSequence}")
+
             ## Now we process the responses alongside their commands
             for commandIndex, command in enumerate(flattenedCommandSequence[respondedCommandsCounter:], start=respondedCommandsCounter):
                 ## We iterate over the response index (until we find the response that matches the expectations of executing the command)
                 for _, response in enumerate(responseSequence[responseProccessedCounter:], start=responseProccessedCounter):
-
                     ## process responses
-                    ## - this is some custom callback provided by the test case
                     callbackResult = self._responseCallback(command, response)
                     ## increment counter
                     responseProccessedCounter += 1
@@ -276,7 +277,7 @@ class TelnetClientSimulator:
 
                 ## if we have processed all requests, then we should not process any commands
                 ## - this is because of the sequential nature of commands and corresponding responses
-                if responseProccessedCounter == len(responseSequence) - 1:
+                if responseProccessedCounter == len(responseSequence):
                     break
 
             ## If we exited the outer for loop early, then we have unprocessed commands
@@ -289,7 +290,7 @@ class TelnetClientSimulator:
                 respondedCommandsCounter += 1
 
         clientSock.settimeout(None)
-        return (flattenedCommandSequence, respondedCommandsCounter), (responseSequence, responseProccessedCounter)
+        self._cleanup()
         return (flattenedCommandSequence, respondedCommandsCounter), (responseSequence, responseProccessedCounter)
 
     @abc.abstractmethod
@@ -300,18 +301,20 @@ class TelnetClientSimulator:
     def _requestCallback(self, request: bytes) -> None:
         return None
 
-
+    @abc.abstractmethod
+    def _cleanup(self) -> None:
+        return None
 
 
 ## NOTE: This command simulator only implements default data connection transfer
 
+## TODO: Cleanup class and naming
 class FTPClientSimulator(TelnetClientSimulator):
     dataConnInitiationCommands: FrozenSet[bytes] = frozenset({b"PORT", b"PASV"})
     dataConnControlCommands: FrozenSet[bytes] = frozenset({b"PORT", b"PASV", b"ABORT"})
     dataConnReliantCommands: FrozenSet[bytes] = frozenset({b"RETR", b"STOR", b"STOU", b"APPEND", b"LIST", b"NLST"})
     dataRecvCommands: FrozenSet[bytes] = frozenset({b"RETR", b"LIST", b"NLST"})
     dataSendCommands: FrozenSet[bytes] = frozenset({b"STOR", b"STOU", b"APPEND"})
-    unqueriedResponses: FrozenSet[bytes] = frozenset({b""})
 
     ## TODO; Verify with RFC that these are correct
     acceptableCommandFollowThrough: Dict[bytes, Dict[bytes, Tuple[bytes]]] = {
@@ -400,19 +403,44 @@ class FTPClientSimulator(TelnetClientSimulator):
         ## Once a data connection has been completed or aborted, it is popleft() from this ds
         self.dataConnSockets = []
         self.dataConnTypes = []
+        self.transferDirections = []
         self.dataConnCounter = 0
-        self.responseFollowThrough = collections.deque()
+        
+        self.totalDataMessages = []
+        self.dataConnSetupMessages = []
+        self.dataMessageCounter = 0
+        
+        self.dataSendMessages = []
+        self.dataSendMessageCounter = 0
 
-    def simulateCommSequence(self, clientSock: socket.socket, commandSequence: Tuple[bytes], dataSequence: Tuple[bytes], dtsTimeout: Optional[Union[float, int]] = 0.2) -> None:
+        self.dataConnSelector = [-1]
+        self.dataConnSelectorCounter = 0
+
+
+    def simulateCommSequence(self, clientSock: socket.socket, commandSequence: Tuple[bytes], dataSendMessageSequence: Tuple[bytes], dtsTimeout: Optional[Union[float, int]] = 0.2) -> None:
+        self.dataSendMessages = dataSendMessageSequence
         (flattenedCommandSequence, respondedCommandsCounter), (responseSequence, responseProccessedCounter) = self._simulateCommSequence(clientSock, commandSequence, dtsTimeout)
-        return (flattenedCommandSequence, respondedCommandsCounter), (responseSequence, responseProccessedCounter), (self.dataConnSockets, self.dataConnTypes)
+        return (flattenedCommandSequence, respondedCommandsCounter), (responseSequence, responseProccessedCounter), (self.totalDataMessages, self.dataConnTypes)
 
 
-    def _extractDataTransfers(self) -> None:
-        raise NotImplementedError()
-        return None
+    def _recvData(self, dataConnCounter) -> bytes:
+        s = self.dataConnSockets[dataConnCounter]
+        msg = b""
+        while True:
+            recv = s.recv(1024)
+            if recv == b"":
+                break
+            msg += recv
+        return msg
 
-    
+    def _sendData(self, dataConnCounter) -> bytes:
+        s = self.dataConnSockets[dataConnCounter]
+        msg = self.dataSendMessages[self.dataSendMessageCounter]
+        s.sendall(msg)
+        s.close()
+        self.dataSendMessageCounter += 1
+        return msg
+
     def _responseCallback(self, request: bytes, response: bytes) -> bool:
         ## We are a ftp client here, we need to respond accordingly
         req = re.search(b"^\w+", request).group(0)
@@ -420,29 +448,34 @@ class FTPClientSimulator(TelnetClientSimulator):
         # print(f"responseCallback: req -> {str(request)}, resp_potential -> {str(response)}")
         if req in self.dataConnControlCommands:
             if req == b"PASV" and resp == b"227":
+                ## If the client has already issued this command in the chunk sent
+                ## - then we do not attempt to setup a connection to this
+
                 ## then we create a connection using resp detailss
                 pasvArgs = re.search(b"(\d+),(\d+),(\d+),(\d+),(\d+),(\d+)", response)
                 host = b".".join(pasvArgs.group(1,2,3,4))
                 port = int(pasvArgs.group(5)) * 256 + int(pasvArgs.group(6))
 
                 s = socket.socket()
-                s.connect((host, port))
-                self.dataConnSockets.append(s)
-                self.dataConnTypes.append("PASV")
-                return True
+                ## We cannot connect here in-case the server has dropped this PASV conn for a new one
+                ## e.g. PASV, PASV, LIST (The first PASV cannot be used to connect
+                # s.connect((host, port))
 
+                self.dataConnSockets.append(s)
+                self.totalDataMessages.append(None)
+                self.dataConnTypes.append("PASV")
+                self.dataConnSetupMessages.append((host, port))
+                return True
             elif req == b"PORT" and resp == b"200":
                 ## A 200 means the server recognizes our PORT successfuly
                 ## - It does NOT mean that it will connect at this time however
                 ## - It can wait to connect until just before a data reliant command is issued
                 return True
-
             elif req == b"ABORT" and resp in (b"225", b"226"):
                 ## TODO: What do we do if we recieve a failure on the ABORT command
                 raise NotImplementedError()
                 return True
 
-        
 
         ## Check if it is an acceptable respone
         if resp not in self.acceptableCommandResponses[req]:
@@ -457,25 +490,41 @@ class FTPClientSimulator(TelnetClientSimulator):
             ## if it's not a acceptable response or acceptable followthrough, we return false
             if valid is False:
                 return False
-        else:
-             ## All informational messages 1x are followed through by a 2x or 4x, or 5x message
-            if resp.startswith(b"1"):
-                ## Therefore, we can skip these and check if the follow through message (or an original reply is observed)
-                return False
 
 
         ## In case we haven't validated in the data connection initiation session, we do a standard valiation below
         if req in self.dataConnReliantCommands:
+            ## First we check if the command has been accepted (via the informational 1x responses)
+            if resp in (b"125", b"150"):
+                dataConnCounter = self.dataConnSelector[self.dataConnSelectorCounter]
+                connType = self.dataConnTypes[dataConnCounter]
+                transferDirection = self.transferDirections[self.dataMessageCounter - 1]
+                
+                if connType == "PORT":
+                    self.dataConnSockets[dataConnCounter] = self.dataConnSockets[dataConnCounter].accept()[0] ## (socket, peerinfo)
+
+                ## NOTE/TODO: If we add different data transfer methods (e.g. Stream, Block, ...), we will need to modify the below logic
+                ## including _recvData() _sendData(), and when to increment the connections (maybe) and socket handling/creation (maybe)
+
+                if transferDirection == "RECV":
+                    self.totalDataMessages[dataConnCounter] = self._recvData(dataConnCounter)
+                else:
+                    self.totalDataMessages[dataConnCounter] = self._sendData(dataConnCounter)
+
             ## Here, we assume we have a complete response that satisifies our connection
-            if resp.startswith(b"2") or resp == b"426":
-                if self.dataConnTypes[self.dataConnCounter] == "PORT":
-                    self.dataConnSockets[self.dataConnCounter] = self.dataConnSockets[self.dataConnCounter].accept()
-                self.dataConnCounter += 1
+            if resp.startswith(b"2") or resp in (b"426"):
+                self.dataConnSelectorCounter += 1
 
             ## otherwise, it failed to be used, so data connection hasn't been consumed
         else:
             ## if this is a control only command, so we do nothing
             pass
+
+
+        ## All informational messages 1x are followed through by a 2x or 4x, or 5x message
+        if resp.startswith(b"1"):
+            ## Therefore, we can skip these (if non-File action commands) and check if the follow through message (or an original reply is observed)
+            return False
 
         return True
 
@@ -487,21 +536,31 @@ class FTPClientSimulator(TelnetClientSimulator):
             ## then we setup a connection
             if req == b"PASV":
                 ## we sort this out when we receive a response (and the responseCallback is executed)
-                pass
+                self.dataConnSelector[-1] += 1
             elif req == b"PORT":
                 ## We retrieve the PORT args for host, port values
                 portArgs = re.search(b"^PORT (\d+),(\d+),(\d+),(\d+),(\d+),(\d+)\r\n", request)
-                host = b".".join(portArgs.group(1,2,3,4))
-                port = int(portArgs.group(5)) * 256 + int(portArgs.group(6))
+                if portArgs is not None:
+                    host = b".".join(portArgs.group(1,2,3,4))
+                    port = int(portArgs.group(5)) * 256 + int(portArgs.group(6))
 
-                ## we setup a new connection
-                s = socket.socket()
-                s.bind((host, port))
-                s.listen()
+                    ## we setup a new connection
+                    s = socket.socket()
+                    ## NOTE: Avoid spending time testing reusage of PORT commands on same source endpoint
+                    # s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+                    ## NOTE: Enables socket to bind to a source endpoint where a previous socket is in TIME_WAIT
+                    ## state. Test re-execution can fail if sockets in a previous execution are in this state, and we attempt
+                    ## to bind to the same address in the current execution
+                    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    s.bind((host, port))
+                    s.listen()
 
-                ## we then add it to the list
-                self.dataConnSockets.append(s)
-                self.dataConnTypes.append("PORT")
+                    ## we then add it to the list
+                    self.dataConnSockets.append(s)
+                    self.totalDataMessages.append(None)
+                    self.dataConnTypes.append("PORT")
+                    self.dataConnSetupMessages.append((host, port))
+                    self.dataConnSelector[-1] += 1
 
             elif req == b"ABORT":
                 ## I need to read the ftp rfc to understand meticulously the behavior of ABORT
@@ -509,16 +568,28 @@ class FTPClientSimulator(TelnetClientSimulator):
 
         elif req in self.dataConnReliantCommands:
             ## At this point if we have preceeded this with a PORT command, we perform a accept()
-            # if req in self.dataSendCommands:
-            #     ## if it is a send command 
-            #     raise NotImplementedError()
-            #     pass
-            # elif req in self.dataRecvCommands:
-            #     ## then we do nothing for recv commands (on request callback)
-            #     pass
-            pass
+            self.dataMessageCounter += 1
+            if req in self.dataSendCommands:
+                self.transferDirections.append("SEND")
+            else:
+                self.transferDirections.append("RECV")
+
+            ## NOTE: This doesn't work if a batch containing a data-command that uses PASV conn
+            dataConnCounter = self.dataConnSelector[self.dataConnSelectorCounter]
+            connType = self.dataConnTypes[dataConnCounter]
+
+            if connType == "PASV":
+                ## otherwise we need to connect to the client
+                host, port = self.dataConnSetupMessages[dataConnCounter]
+                self.dataConnSockets[dataConnCounter].connect((host, port))
+
+            self.dataConnSelector.append(self.dataConnSelector[-1])
 
         return None
+
+    def _cleanup(self):
+        for sock in self.dataConnSockets:
+            sock.close()
 
 
 def main() -> None:
@@ -531,16 +602,28 @@ def main() -> None:
     commSequence = [
         [b"USER SI_FTPTestUser1\r\n"],
         [bytes(f"PASS {password}\r\n", "utf-8")],
-        [b"PASV\r\n"],
+        [b"PASV\r\n", b"PASV\r\n", b"PASV\r\n"],
         [b"LIST\r\n"],
+        [b"PASV\r\n"],
+        [b"PASV\r\n"],
         [b"PORT 127,0,0,1,10,0\r\n"],
-        [b"LIST\r\n"]
+        [b"PORT 127,0,0,1,10,1\r\n"],
+        [b"LIST\r\n"],
+        [b"PASV\r\n"],
+        [b"PORT 127,0,0,1,10,2\r\n", b"PORT 127,0,0,1,10,3\r\n", b"LIST\r\n"],
+        [b"DELE test.txt\r\n"],
+        [b"PORT 127,0,0,1,10,5\r\n", b"PORT 127,0,0,1,10,6\r\n"],
+        [b"STOR test.txt\r\n"],
+        [b"DELE test.txt\r\n"]
+
     ]
 
     ## Data to send to the client
-    dataSequence = []
+    dataSequence = [
+        b"testing123"
+    ]
 
-    pprint.pprint(cs.simulateCommSequence(clientSock, commSequence, dataSequence))
+    pprint.pprint(cs.simulateCommSequence(clientSock, commSequence, dataSequence, 0.25))
     return None
 
 if __name__ == "__main__":
