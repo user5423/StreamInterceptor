@@ -232,7 +232,7 @@ class Test_Buffer_ByteOperations:
 
     def test_pop_oneByte_zeroBuffer(self, defaultBuffer):
         b = defaultBuffer        
-        # b._outgoingData is initialized as empty bytearray()
+        # b._outgoingData is initialized as empty bytearray()ran
         assert bytearray() == b.pop(1)
         assert len(b._outgoingData) == 0
         assert len(b._messages) == 0
@@ -407,13 +407,13 @@ class Test_Buffer_Hooks:
     ## TODO: Need to assert whether the state of the buffer doesn't change
 
     def _simulateHook(self, buffer: Buffer, message: bytes, flag: "Type[self._flag]", hookType: "Type[self._hook]", hookStr: str, hookArgs: Tuple = (), hookKwargs: Dict = {}) -> None:
-        hook_partial = functools.partial(hookType, *hookArgs, **hookKwargs)
-        if hookStr == "user":
-            buffer.setTransparentHook(hook_partial)
-            buffer._executeHook(buffer._transparentHook, message)
+        if hookStr == "transparent":
+            buffer.setTransparentHook(hookType, buffer, hookArgs, hookKwargs)
         else:
-            buffer.setNonTransparentHook(hook_partial)
-            buffer._executeHook(buffer._nonTransparentHook, message)
+            buffer.setNonTransparentHook(hookType, buffer, hookArgs, hookKwargs)
+        
+        new_message, continueProcessing = buffer._executeHooks(message)
+        ## TODO: Run assertion tests on output of executeHooks()
 
         isRan = False
         buffer.write(message)
@@ -423,7 +423,9 @@ class Test_Buffer_Hooks:
 
     def test_transparentHookDefault(self, hookTestResources):
         b, flag, message = hookTestResources
-        assert b._executeHook(b._transparentHook, message) is None
+        new_message, continueProcessing = b._executeHooks(message)
+        assert new_message == message
+        assert continueProcessing is True
                 
 
     def test_transparentHookFunctor_noParams(self, hookTestResources):
@@ -432,11 +434,12 @@ class Test_Buffer_Hooks:
             def __init__(self, server=None, buffer=None):
                 self.buffer = buffer
 
-            def __call__(self, message: bytearray) -> None:
+            def __call__(self, message: bytearray) -> bool:
                 nonlocal flag
                 flag.setFlag()
+                return True
 
-        self._simulateHook(b, message, flag, UserHook, "user")
+        self._simulateHook(b, message, flag, UserHook, "transparent")
 
 
     def test_transparentHookFunctor_args(self, hookTestResources):
@@ -451,10 +454,11 @@ class Test_Buffer_Hooks:
             def __call__(self, message: bytearray) -> None:
                 nonlocal flag
                 flag.setFlag()
+                return True
 
-        self._simulateHook(b, message, flag, UserHook, "user", args)
-        assert b._transparentHook.arg1 == args[0]
-        assert b._transparentHook.arg2 == args[1]
+        self._simulateHook(b, message, flag, UserHook, "transparent", args)
+        assert b._hooks[0].streamInterceptor.arg1 == args[0]
+        assert b._hooks[0].streamInterceptor.arg2 == args[1]
 
 
     def test_transparentHookFunctor_kwargs(self, hookTestResources):
@@ -470,11 +474,11 @@ class Test_Buffer_Hooks:
             def __call__(self, message: bytearray) -> None:
                 nonlocal flag
                 flag.setFlag()
+                return True
 
-        self._simulateHook(b, message, flag, UserHook, "user", hookKwargs = kwargs)
-        assert b._transparentHook.kwarg1 == kwargs["kwarg1"]
-        assert b._transparentHook.kwarg2 == kwargs["kwarg2"]
-
+        self._simulateHook(b, message, flag, UserHook, "transparent", hookKwargs = kwargs)
+        assert b._hooks[0].streamInterceptor.kwarg1 == kwargs["kwarg1"]
+        assert b._hooks[0].streamInterceptor.kwarg2 == kwargs["kwarg2"]
 
     def test_transparentHookFunctor_argsAndKwargs(self, hookTestResources):
         b, flag, message = hookTestResources
@@ -491,24 +495,26 @@ class Test_Buffer_Hooks:
             def __call__(self, message: bytearray) -> None:
                 nonlocal flag
                 flag.setFlag()
+                return True
 
-        self._simulateHook(b, message, flag, UserHook, "user", args, kwargs)
-        assert b._transparentHook.kwarg1 == kwargs["kwarg1"]
-        assert b._transparentHook.kwarg2 == kwargs["kwarg2"]
-        assert b._transparentHook.arg1 == args[0]
-        assert b._transparentHook.arg2 == args[1]
+        self._simulateHook(b, message, flag, UserHook, "transparent", args, kwargs)
+        assert b._hooks[0].streamInterceptor.kwarg1 == kwargs["kwarg1"]
+        assert b._hooks[0].streamInterceptor.kwarg2 == kwargs["kwarg2"]
+        assert b._hooks[0].streamInterceptor.arg1 == args[0]
+        assert b._hooks[0].streamInterceptor.arg2 == args[1]
 
 
     def test_transparentHookGenerator_noParams(self, hookTestResources):
         b, flag, message = hookTestResources
         def UserHook(server=None, buffer=None):
             nonlocal flag
+            mesage = yield
             while True:
-                message = yield
                 flag.setFlag()
+                message = yield True
             return None
 
-        self._simulateHook(b, message, flag, UserHook, "user")
+        self._simulateHook(b, message, flag, UserHook, "transparent")
 
 
     def test_transparentHookGenerator_args(self, hookTestResources):
@@ -519,12 +525,13 @@ class Test_Buffer_Hooks:
             nonlocal _arg1, _arg2
             _arg1 = arg1; _arg2 = arg2
             nonlocal flag
+            message = yield True
             while True:
-                message = yield
                 flag.setFlag()
-            return None
+                message = yield True
+            return True
 
-        self._simulateHook(b, message, flag, UserHook, "user", args)
+        self._simulateHook(b, message, flag, UserHook, "transparent", args)
         assert _arg1 == args[0]
         assert _arg2 == args[1]
 
@@ -539,9 +546,9 @@ class Test_Buffer_Hooks:
             while True:
                 message = yield
                 flag.setFlag()
-            return None
+            return True
 
-        self._simulateHook(b, message, flag, UserHook, "user", hookKwargs=kwargs)
+        self._simulateHook(b, message, flag, UserHook, "transparent", hookKwargs=kwargs)
         assert _kwarg1 == kwargs["kwarg1"]
         assert _kwarg2 == kwargs["kwarg2"]
 
@@ -559,9 +566,9 @@ class Test_Buffer_Hooks:
             while True:
                 message = yield
                 flag.setFlag()
-            return None
+            return True
 
-        self._simulateHook(b, message, flag, UserHook, "user", args, kwargs)
+        self._simulateHook(b, message, flag, UserHook, "transparent", args, kwargs)
         assert _arg1 == args[0]
         assert _arg2 == args[1]
         assert _kwarg1 == kwargs["kwarg1"]
@@ -570,7 +577,10 @@ class Test_Buffer_Hooks:
 
     def test_nonTransparentHookDefault(self, hookTestResources):
         b, flag, message = hookTestResources
-        assert b._executeHook(b._nonTransparentHook, message) == message
+        new_message, continueProcessing = b._executeHooks(message)
+        assert new_message == message
+        assert continueProcessing is True
+
 
 
     def test_nonTransparentHookFunctor_noParams(self, hookTestResources):
@@ -583,6 +593,7 @@ class Test_Buffer_Hooks:
             def __call__(self, message: bytearray) -> None:
                 nonlocal flag
                 flag.setFlag()
+                return message, True
 
         self._simulateHook(b, message, flag, ProcessingHook, "processing")
 
@@ -599,10 +610,11 @@ class Test_Buffer_Hooks:
             def __call__(self, message: bytearray) -> None:
                 nonlocal flag
                 flag.setFlag()
+                return message, True
 
         self._simulateHook(b, message, flag, ProcessingHook, "processing", args)
-        assert b._nonTransparentHook.arg1 == args[0]
-        assert b._nonTransparentHook.arg2 == args[1]
+        assert b._hooks[0].streamInterceptor.arg1 == args[0]
+        assert b._hooks[0].streamInterceptor.arg2 == args[1]
 
 
     def test_nonTransparentHookFunctor_kwargs(self, hookTestResources):
@@ -618,10 +630,11 @@ class Test_Buffer_Hooks:
             def __call__(self, message: bytearray) -> None:
                 nonlocal flag
                 flag.setFlag()
+                return message, True
 
         self._simulateHook(b, message, flag, ProcessingHook, "processing", hookKwargs = kwargs)
-        assert b._nonTransparentHook.kwarg1 == kwargs["kwarg1"]
-        assert b._nonTransparentHook.kwarg2 == kwargs["kwarg2"]
+        assert b._hooks[0].streamInterceptor.kwarg1 == kwargs["kwarg1"]
+        assert b._hooks[0].streamInterceptor.kwarg2 == kwargs["kwarg2"]
 
 
     def test_nonTransparentHookFunctor_argsAndKwargs(self, hookTestResources):
@@ -639,21 +652,23 @@ class Test_Buffer_Hooks:
             def __call__(self, message: bytearray) -> None:
                 nonlocal flag
                 flag.setFlag()
+                return message, True
 
         self._simulateHook(b, message, flag, ProcessingHook, "processing", args, kwargs)
-        assert b._nonTransparentHook.kwarg1 == kwargs["kwarg1"]
-        assert b._nonTransparentHook.kwarg2 == kwargs["kwarg2"]
-        assert b._nonTransparentHook.arg1 == args[0]
-        assert b._nonTransparentHook.arg2 == args[1]
+        assert b._hooks[0].streamInterceptor.kwarg1 == kwargs["kwarg1"]
+        assert b._hooks[0].streamInterceptor.kwarg2 == kwargs["kwarg2"]
+        assert b._hooks[0].streamInterceptor.arg1 == args[0]
+        assert b._hooks[0].streamInterceptor.arg2 == args[1]
 
 
     def test_nonTransparentHookGenerator_noParams(self, hookTestResources):
         b, flag, message = hookTestResources
         def ProcessingHook(server=None, buffer=None):
             nonlocal flag
+            message = yield None
             while True:
-                message = yield
                 flag.setFlag()
+                message = yield message, True
             return None
 
         self._simulateHook(b, message, flag, ProcessingHook, "processing")
@@ -664,12 +679,13 @@ class Test_Buffer_Hooks:
         args = ("arg1", "arg2")
         _arg1 = None; _arg2 = None
         def ProcessingHook(arg1, arg2, server=None, buffer=None):
-            nonlocal _arg1, _arg2
+            nonlocal _arg1, _arg2, args
             _arg1 = arg1; _arg2 = arg2
             nonlocal flag
+            message = yield None
             while True:
-                message = yield
                 flag.setFlag()
+                message = yield message, True
             return None
 
         self._simulateHook(b, message, flag, ProcessingHook, "processing", args)
@@ -682,12 +698,13 @@ class Test_Buffer_Hooks:
         kwargs = {"kwarg1": "val1", "kwarg2": "val2"}
         _kwarg1 = None; _kwarg2 = None
         def ProcessingHook(kwarg1=None, kwarg2=None, server=None, buffer=None):
-            nonlocal _kwarg1, _kwarg2
+            nonlocal _kwarg1, _kwarg2, kwargs
             _kwarg1 = kwarg1; _kwarg2 = kwarg2
             nonlocal flag
+            message = yield None
             while True:
-                message = yield
                 flag.setFlag()
+                message = yield message, True
             return None
 
         self._simulateHook(b, message, flag, ProcessingHook, "processing", hookKwargs=kwargs)
@@ -700,13 +717,14 @@ class Test_Buffer_Hooks:
         kwargs = {"kwarg1": "val1", "kwarg2": "val2"}
         _arg1 = None; _arg2 = None
         _kwarg1 = None; _kwarg2 = None
-        def ProcessingHook(arg1, arg2, kwarg1=None, kwarg2=None, server=None, buffer=None):
+        def ProcessingHook(arg1, arg2, kwarg1 = None, kwarg2 = None, server=None, buffer=None):
             nonlocal _arg1, _arg2, _kwarg1, _kwarg2
             _arg1 = arg1; _arg2 = arg2; _kwarg1 = kwarg1; _kwarg2 = kwarg2
             nonlocal flag
+            message = yield None
             while True:
-                message = yield
                 flag.setFlag()
+                message = yield message, True
             return None
 
         self._simulateHook(b, message, flag, ProcessingHook, "processing", args, kwargs)
