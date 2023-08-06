@@ -9,7 +9,7 @@ import socket
 sys.path.insert(0, os.path.join("..", "src"))
 sys.path.insert(0, "src")
 from tcp_proxyserver import ProxyTunnel
-from _proxyDS import Buffer
+from _proxyDS import Buffer, StreamInterceptorRegister, StreamInterceptor
 from _exceptions import *
 from tests.testhelper.TestResources import PTTestResources
 
@@ -90,8 +90,13 @@ class Test_ProxyTunnel_Init:
         proxyToServerSocket = clientToProxySocket
         streamInterceptor, _ = PTTestResources.createMockStreamInterceptor()
 
+        streamInterceptorRegistration = [(
+                    [StreamInterceptorRegister(streamInterceptor.ClientToServerHook, False, False),],
+                    [StreamInterceptorRegister(streamInterceptor.ServerToClientHook, False, False),]
+                )
+            ]
         with pytest.raises(ValueError) as excInfo:
-            ProxyTunnel(clientToProxySocket, proxyToServerSocket, streamInterceptor)
+            ProxyTunnel(clientToProxySocket, proxyToServerSocket, streamInterceptorRegistration)
 
         assert "duplicate sockets" in str(excInfo.value)
 
@@ -102,8 +107,14 @@ class Test_ProxyTunnel_Init:
         streamInterceptor, _ = PTTestResources.createMockStreamInterceptor()
 
         PTTestResources.closeSocket(clientToProxySocket)
+        streamInterceptorRegistration = [(
+                    [StreamInterceptorRegister(streamInterceptor.ClientToServerHook, False, False),],
+                    [StreamInterceptorRegister(streamInterceptor.ServerToClientHook, False, False),]
+                )
+            ]
         with pytest.raises(ValueError) as excInfo:
-            ProxyTunnel(clientToProxySocket, proxyToServerSocket, streamInterceptor)
+            ProxyTunnel(clientToProxySocket, proxyToServerSocket, streamInterceptorRegistration)
+
 
         assert "closed socket" in str(excInfo.value)
         assert "ClientToServer" in str(excInfo.value)
@@ -115,8 +126,14 @@ class Test_ProxyTunnel_Init:
         streamInterceptor, _ = PTTestResources.createMockStreamInterceptor()
 
         PTTestResources.closeSocket(proxyToServerSocket)
+        streamInterceptorRegistration = [(
+                    [StreamInterceptorRegister(streamInterceptor.ClientToServerHook, False, False),],
+                    [StreamInterceptorRegister(streamInterceptor.ServerToClientHook, False, False),]
+                )
+            ]
         with pytest.raises(ValueError) as excInfo:
-            ProxyTunnel(clientToProxySocket, proxyToServerSocket, streamInterceptor)
+            ProxyTunnel(clientToProxySocket, proxyToServerSocket, streamInterceptorRegistration)
+
 
         assert "closed socket" in str(excInfo.value)
         assert "ProxyToServer" in str(excInfo.value)
@@ -127,23 +144,33 @@ class Test_ProxyTunnel_Init:
         proxyToServerSocket = PTTestResources.createClientSocket()
         streamInterceptor, (clientToServerDeque, serverToClientDeque) = PTTestResources.createMockStreamInterceptor()
 
-        pt = ProxyTunnel(clientToProxySocket, proxyToServerSocket, streamInterceptor)
+        streamInterceptorRegistration = [(
+                    [StreamInterceptorRegister(streamInterceptor.ClientToServerHook, False, False),],
+                    [StreamInterceptorRegister(streamInterceptor.ServerToClientHook, False, False),]
+                )
+            ]
+        
+        pt = ProxyTunnel(clientToProxySocket, proxyToServerSocket, streamInterceptorRegistration)
 
-        assert isinstance(pt.streamInterceptor, streamInterceptor)
         assert isinstance(pt.clientToProxySocket, socket.socket)
         assert isinstance(pt.proxyToServerSocket, socket.socket)
 
         ## TODO: Assertions on Buffers and RequestHook
         assert isinstance(pt.serverToClientBuffer, Buffer)
         assert isinstance(pt.clientToServerBuffer, Buffer)
+
+        assert len(pt.clientToServerBuffer._hooks) == 1
+        assert isinstance(pt.clientToServerBuffer._hooks[0].streamInterceptor, StreamInterceptor.Hook)
+        assert len(pt.serverToClientBuffer._hooks) == 1
+        assert isinstance(pt.serverToClientBuffer._hooks[0].streamInterceptor, StreamInterceptor.Hook)
         
         request = b"completeRequest\r\n"
-        pt.clientToServerBuffer._transparentHook(request)
+        pt.clientToServerBuffer._hooks[0].streamInterceptor(request)
         assert len(clientToServerDeque) == 1
         assert clientToServerDeque[-1] == request
 
         response = b"completeResponse\r\n"
-        pt.serverToClientBuffer._transparentHook(response)
+        pt.serverToClientBuffer._hooks[0].streamInterceptor(response)
         assert len(serverToClientDeque) == 1
         assert serverToClientDeque[-1] == response
 
