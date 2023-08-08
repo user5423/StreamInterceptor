@@ -21,7 +21,7 @@ from tests.testhelper.TestResources import PTTestResources,TPSTestResources
 
 sys.path.insert(0, os.path.join("..", "src"))
 sys.path.insert(0, "src")
-from tcp_proxyserver import ProxyConnections, TCPProxyServer, ProxyTunnel
+from tcp_proxyserver import ProxyConnections, TCPProxyServer, ProxyTunnel, StreamInterceptorRegister
 from _exceptions import *
 from _proxyDS import StreamInterceptor, Buffer
 
@@ -33,13 +33,17 @@ def createTCPProxyServer():
     PROXY_HOST, PROXY_PORT = "127.0.0.1", 1337
     HOST, PORT = "127.0.0.1", 8080
     streamInterceptor, _ = PTTestResources.createMockStreamInterceptor()
-
+    streamInterceptorRegistration = ((
+                (StreamInterceptorRegister(streamInterceptor.ClientToServerHook, False, False),),
+                (StreamInterceptorRegister(streamInterceptor.ServerToClientHook, False, False),)
+            ),
+    )
     ## first we need to kill any processes running on the (HOST, PORT)
     # TPSTestResources.freePort(PORT)
 
     ## we can then try to create the server (not execute it yet)
-    server = TCPProxyServer(HOST, PORT, PROXY_HOST, PROXY_PORT, streamInterceptor, addressReuse=True)
-    yield HOST, PORT, PROXY_HOST, PROXY_PORT, streamInterceptor, server
+    server = TCPProxyServer(HOST, PORT, PROXY_HOST, PROXY_PORT, streamInterceptorRegistration, addressReuse=True)
+    yield HOST, PORT, PROXY_HOST, PROXY_PORT, streamInterceptor, streamInterceptorRegistration, server
 
     ## we then want to shut down the server (at least the server socket)
     server._close()
@@ -47,7 +51,7 @@ def createTCPProxyServer():
 
 @pytest.fixture()
 def createSingleThreadTCPProxyServer(createTCPProxyServer):
-    HOST, PORT, PROXY_HOST, PROXY_PORT, interceptor, proxyServer = createTCPProxyServer
+    HOST, PORT, PROXY_HOST, PROXY_PORT, interceptor, interceptorRegistration, proxyServer = createTCPProxyServer
 
     class threadWrapper:
         def __init__(self, proxyServer) -> None:
@@ -80,7 +84,7 @@ def createSingleThreadTCPProxyServer(createTCPProxyServer):
 
 @pytest.fixture()
 def createBackendEchoServer(createTCPProxyServer):
-    HOST, PORT, PROXY_HOST, PROXY_PORT, interceptor, proxyServer = createTCPProxyServer
+    HOST, PORT, PROXY_HOST, PROXY_PORT, interceptor, interceptorRegister, proxyServer = createTCPProxyServer
     echoServer = TPSTestResources.setupEchoServer(PROXY_HOST, PROXY_PORT)
     yield echoServer
 
@@ -105,11 +109,11 @@ class Test_ProxyServer_Init:
         assert "PROXY_HOST" in errorMsg
         assert "PORT" in errorMsg
         assert "PROXY_PORT" in errorMsg
-        assert "streamInterceptor" in errorMsg
+        assert "__init__()" in errorMsg
 
 
     def test_init_singleRealServerSocket(self, createTCPProxyServer) -> None:
-        HOST, PORT, PROXY_HOST, PROXY_PORT, interceptor, server = createTCPProxyServer
+        HOST, PORT, PROXY_HOST, PROXY_PORT, interceptor, interceptorRegistration, server = createTCPProxyServer
 
         ## we need to create the socket
             ## should be listening at (server.HOST, server.PORT)
@@ -132,10 +136,10 @@ class Test_ProxyServer_Init:
 
 
     def test_init_alreadyRegistered(self, createTCPProxyServer) -> None:
-        HOST, PORT, PROXY_HOST, PROXY_PORT, streamInterceptor, server1 = createTCPProxyServer
+        HOST, PORT, PROXY_HOST, PROXY_PORT, streamInterceptor, streamInterceptorRegistration, server1 = createTCPProxyServer
 
         with pytest.raises(OSError) as excInfo:
-            TCPProxyServer(HOST, PORT, PROXY_HOST, PROXY_PORT, streamInterceptor, addressReuse=True)
+            TCPProxyServer(HOST, PORT, PROXY_HOST, PROXY_PORT, streamInterceptorRegistration, addressReuse=True)
 
         assert "Address already in use" in str(excInfo.value)
 
@@ -371,7 +375,7 @@ class Test_ProxyServer_connectionDataHandling:
             TPSTestResources.assertConstantAttributes(proxyServer, *proxyServerArgs)
             TPSTestResources.assertSelectorState(proxyServer, connections)
             TPSTestResources.assertProxyConnectionsState(proxyServer, connections)
-            TPSTestResources.assertUserConnectionData(proxyServer.streamInterceptorType, connections, connectionData)
+            TPSTestResources.assertUserConnectionData(proxyServer.MESSAGE_DELIMITERS, connections, connectionData)
             TPSTestResources.assertProxyTunnelsState(proxyServer, connections, connectionData)
         except Exception as e:
             print(f"Assert ConnectionHandling - Exception raised: {e}")
@@ -388,7 +392,7 @@ class Test_ProxyServer_connectionDataHandling:
     ## Unfilled Buffer
     def test_singleConnection_singleChunk_unfilledBuffer_oneIncompleteMessage(self, createEchoProxyEnvironment) -> None:
         echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
-        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptorType.MESSAGE_DELIMITERS
+        delimiterList = proxyServerThreadWrapper.proxyServer.MESSAGE_DELIMITERS
 
         ## PARAMETERS
         connectionsToCreate = 1
@@ -405,7 +409,7 @@ class Test_ProxyServer_connectionDataHandling:
 
     def test_singleConnection_singleChunk_unfilledBuffer_oneCompleteMessages(self, createEchoProxyEnvironment) -> None:
         echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
-        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptorType.MESSAGE_DELIMITERS
+        delimiterList = proxyServerThreadWrapper.proxyServer.MESSAGE_DELIMITERS
 
         ## PARAMETERS
         connectionsToCreate = 1
@@ -423,7 +427,7 @@ class Test_ProxyServer_connectionDataHandling:
 
     def test_singleConnection_singleChunk_unfilledBuffer_oneCompleteMessages_IncompleteMessage(self, createEchoProxyEnvironment) -> None:
         echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
-        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptorType.MESSAGE_DELIMITERS
+        delimiterList = proxyServerThreadWrapper.proxyServer.MESSAGE_DELIMITERS
 
         ## PARAMETERS
         connectionsToCreate = 1
@@ -440,7 +444,7 @@ class Test_ProxyServer_connectionDataHandling:
 
     def test_singleConnection_singleChunk_unfilledBuffer_ManyCompleteMessages(self, createEchoProxyEnvironment) -> None:
         echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
-        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptorType.MESSAGE_DELIMITERS
+        delimiterList = proxyServerThreadWrapper.proxyServer.MESSAGE_DELIMITERS
 
         ## PARAMETERS
         connectionsToCreate = 1
@@ -457,7 +461,7 @@ class Test_ProxyServer_connectionDataHandling:
 
     def test_singleConnection_singleChunk_unfilledBuffer_ManyCompleteMessages_IncompleteMessage(self, createEchoProxyEnvironment) -> None:
         echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
-        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptorType.MESSAGE_DELIMITERS
+        delimiterList = proxyServerThreadWrapper.proxyServer.MESSAGE_DELIMITERS
 
         ## PARAMETERS
         connectionsToCreate = 1
@@ -497,7 +501,7 @@ class Test_ProxyServer_connectionDataHandling:
 #     ## Unfilled Buffer
     def test_multiConnection_singleChunk_unfilledBuffer_oneIncompleteMessage(self, createEchoProxyEnvironment) -> None:
         echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
-        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptorType.MESSAGE_DELIMITERS
+        delimiterList = proxyServerThreadWrapper.proxyServer.MESSAGE_DELIMITERS
 
         ## PARAMETERS
         connectionsToCreate = 100
@@ -509,13 +513,12 @@ class Test_ProxyServer_connectionDataHandling:
 
         completeConnSender = DataTransferSimulator.createRandomConnSender(dataSizeRange, messageCountRange, chunkCountRange, delimiterList, isEndDelimited, testTimeRange)
         dataTransferArgs = {"completeConnSender": completeConnSender}
-
         self._assertConnectionHandling(echoServer, proxyServerThreadWrapper, proxyServerArgs, connectionsToCreate, dataTransferArgs, dtsTimeout = 0.05)
 
 
     def test_multiConnection_singleChunk_unfilledBuffer_oneCompleteMessages(self, createEchoProxyEnvironment) -> None:
         echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
-        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptorType.MESSAGE_DELIMITERS
+        delimiterList = proxyServerThreadWrapper.proxyServer.MESSAGE_DELIMITERS
 
         ## PARAMETERS
         connectionsToCreate = 100
@@ -533,7 +536,7 @@ class Test_ProxyServer_connectionDataHandling:
 
     def test_multiConnection_singleChunk_unfilledBuffer_oneCompleteMessages_IncompleteMessage(self, createEchoProxyEnvironment) -> None:
         echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
-        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptorType.MESSAGE_DELIMITERS
+        delimiterList = proxyServerThreadWrapper.proxyServer.MESSAGE_DELIMITERS
 
         ## PARAMETERS
         connectionsToCreate = 100
@@ -550,7 +553,7 @@ class Test_ProxyServer_connectionDataHandling:
 
     def test_multiConnection_singleChunk_unfilledBuffer_ManyCompleteMessages(self, createEchoProxyEnvironment) -> None:
         echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
-        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptorType.MESSAGE_DELIMITERS
+        delimiterList = proxyServerThreadWrapper.proxyServer.MESSAGE_DELIMITERS
 
         ## PARAMETERS
         connectionsToCreate = 100
@@ -567,7 +570,7 @@ class Test_ProxyServer_connectionDataHandling:
 
     def test_multiConnection_singleChunk_unfilledBuffer_ManyCompleteMessages_IncompleteMessage(self, createEchoProxyEnvironment) -> None:
         echoServer, proxyServerThreadWrapper, proxyServerArgs = createEchoProxyEnvironment
-        delimiterList = proxyServerThreadWrapper.proxyServer.streamInterceptorType.MESSAGE_DELIMITERS
+        delimiterList = proxyServerThreadWrapper.proxyServer.MESSAGE_DELIMITERS
 
         ## PARAMETERS
         connectionsToCreate = 100
