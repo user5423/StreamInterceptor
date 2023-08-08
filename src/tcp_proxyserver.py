@@ -10,9 +10,9 @@ import signal
 import logging
 from datetime import datetime
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Tuple, Type
+from typing import Dict, Optional, Tuple, Type, NamedTuple, List, Union, Iterable
 
-from _proxyDS import Buffer, proxyHandlerDescriptor, StreamInterceptor
+from _proxyDS import Buffer, proxyHandlerDescriptor, StreamInterceptor, StreamInterceptorDescriptor, StreamInterceptorRegister, StreamInterceptorHelperMixin
 from _exceptions import *
 ## TODO: Replace default exceptions with custom exceptions
 ## TODO: Implement Context management for TCPProxyServer
@@ -22,26 +22,102 @@ from _exceptions import *
 ## TODO: Benchmark server and evaluate performance bottlenecks
 
 
+## Options:
+## Seperate lists of streamInterceptors for each direction
 
-## BUG: Call to write() calls read() and calls to read() call write()
-## --> Results in infinite recursive loop
+## In that case, we can have a ds such as:
+## -- 
+##
+##   [[dir1ai, ...] [dir2ai, ...]], shared, [[dir1, ...], [dir2, ...]], shared
+
+## this translates to an execution in order of:
+## There is no synchronization here, (it is up to the hooks to specify synchronization)
+## NOTE: In the future, we may overhaul this
+
+## Execution:
+## dir1ai_hook,     dir2ai_hook,
+##                  dir2aii_hook
+##          shared1_hook
+## dir1bi_hook,     dir2bi_hook
+## dir1bii_hook,
+##          shared2_hook
+
 @dataclass(unsafe_hash=True)
-class ProxyTunnel:
+class ProxyTunnel(StreamInterceptorHelperMixin):
     clientToProxySocket: socket.socket
     proxyToServerSocket: socket.socket
-    streamInterceptorType: Type[StreamInterceptor]
+    ## TODO: Abstract these types out
+    streamInterceptorRegistration: Tuple[
+                                            Union[
+                                                    Tuple[Tuple[StreamInterceptorRegister, ...], Tuple[StreamInterceptorRegister, ...]],
+                                                    StreamInterceptorRegister
+                                                ]
+                                        ]
+ 
+    # Type[StreamInterceptor]
+    ## TODO: Why do we need hash=None here?
+    isInterceptorShared: bool = field(default=False, hash=None)
     CHUNK_SIZE: int = field(default=1024, hash=None)
 
     def __post_init__(self):
-        ## Initialize streamInterceptor
-        self.streamInterceptor = self.streamInterceptorType()
         ## Setup Bidirectional Buffers
-        self.serverToClientBuffer = Buffer(self.streamInterceptor.MESSAGE_DELIMITERS)
-        self.clientToServerBuffer = Buffer(self.streamInterceptor.MESSAGE_DELIMITERS)
-        ## Set hooks on Bidirectional Buffers
-        self.clientToServerBuffer.setTransparentHook(self.streamInterceptor.ClientToServerHook)
-        self.serverToClientBuffer.setTransparentHook(self.streamInterceptor.ServerToClientHook)
+        self.serverToClientBuffer = Buffer([b"\r\n"])
+        self.clientToServerBuffer = Buffer([b"\r\n"])
 
+        ## Set hooks on Bidirectional Buffers
+        self._registerStreamInterceptors()
+ 
+    ## -------------- INTERCEPTOR REGISTRATION LOGIC START ------------------------------
+
+    def _registerPrivateBufferHooks(self, buffer: Buffer, registrations: List[StreamInterceptorRegister]) -> None:
+        for registration in registrations:
+            streamInterceptorType = registration.streamInterceptorType
+            isTransparent = registration.isTransparent
+
+            if isTransparent:
+                buffer.setTransparentHook(streamInterceptorType)
+            else:
+                buffer.setNonTransparentHook(streamInterceptorType)
+
+        return None
+
+    def _registerSharedBufferHook(self, registration: StreamInterceptorRegister) -> None:
+        streamInterceptorType = registration.streamInterceptorType
+        streamInterceptor = self._setupSharedHookCallable(streamInterceptorType, self.clientToServerBuffer, self.serverToClientBuffer)
+        isTransparent = registration.isTransparent
+
+        if isTransparent:
+            self.clientToServerBuffer.setSharedTransparentHook(streamInterceptor)
+            self.serverToClientBuffer.setSharedTransparentHook(streamInterceptor)
+        else:
+            self.clientToServerBuffer.setSharedNonTransparentHook(streamInterceptor)
+            self.serverToClientBuffer.setSharedNonTransparentHook(streamInterceptor)
+
+        return None
+
+    def _registerStreamInterceptors(self):
+        for element in self.streamInterceptorRegistration:
+
+            ## A element of list is a list of lists of single registrations for each direction
+            if isinstance(element, tuple) and len(element) == 2:
+                clientToServerHooks, serverToClientHooks = element
+                assert isinstance(clientToServerHooks, Iterable)
+                assert isinstance(serverToClientHooks, Iterable)
+                self._registerPrivateBufferHooks(self.clientToServerBuffer, clientToServerHooks)
+                self._registerPrivateBufferHooks(self.serverToClientBuffer, serverToClientHooks)
+            ## If it is a single registration, then it is a shared hook
+            elif isinstance(element, StreamInterceptor):
+                sharedHook = element
+                self._registerSharedBufferHook(sharedHook)
+            else:
+                raise TypeError(f"Unacceptable element type: {type(element)} ")
+
+        return None
+
+    ## -------------- INTERCEPTOR REGISTRATION LOGIC END ------------------------------
+
+
+    ## -------------- BUFFER DATA TRANSFER LOGIC START ------------------------------
 
     ## TODO: Rename to 'transferFromSocketToBuffer(...)'
     def readFrom(self, source: socket.socket) -> Optional[int]:
@@ -100,19 +176,33 @@ class ProxyTunnel:
         else:
             raise UnassociatedTunnelSocket(self, socket)
 
+    ## -------------- BUFFER DATA TRANSFER LOGIC END ------------------------------
+    
+
 
 
 @dataclass
 class ProxyConnections:
     PROXY_HOST: str
     PROXY_PORT: int
-    streamInterceptorType: Type[StreamInterceptor]
+    streamInterceptorRegistration: Tuple[
+                                            Union[
+                                                    Tuple[Tuple[StreamInterceptorRegister, ...], Tuple[StreamInterceptorRegister, ...]],
+                                                    StreamInterceptorRegister
+                                                ]
+                                        ]
     selector: selectors.BaseSelector
 
     _sock: Dict[socket.socket, ProxyTunnel] = field(init=False, default_factory=dict)
 
     def __post_init__(self) -> None:
         self._validateArgs()
+
+    def _validateStreamInterceptor(self, streamInterceptorType: StreamInterceptor) -> None:
+        if (StreamInterceptor.Hook not in streamInterceptorType.__mro__):
+            raise AbsentStreamInterceptorParentError(streamInterceptorType)
+        elif (StreamInterceptor.Hook == streamInterceptorType.__mro__[0]):
+            raise AbstractStreamInterceptorError(streamInterceptorType)
 
     def _validateArgs(self) -> None:
         ## Validate host
@@ -123,14 +213,21 @@ class ProxyConnections:
         if not (isinstance(self.PROXY_PORT, int) and 0 < self.PROXY_PORT):
             raise InvalidProxyPortError(self.PROXY_PORT)
 
-        ## Validate interceptor
-        if (StreamInterceptor not in self.streamInterceptorType.__mro__):
-            raise AbsentStreamInterceptorParentError(self.streamInterceptorType)
-        elif (StreamInterceptor == self.streamInterceptorType.__mro__[0]):
-            raise AbstractStreamInterceptorError(self.streamInterceptorType)
+        ## Validate interceptors
+        for element in self.streamInterceptorRegistration:
+            if isinstance(element, tuple) and len(element) == 2:
+                for l in element:
+                    for registration in l:
+                        assert isinstance(registration, StreamInterceptorRegister)
+                        self._validateStreamInterceptor(registration.streamInterceptorType)
+            else:
+                registration = element
+                assert isinstance(registration, StreamInterceptorRegister)
+                self._validateStreamInterceptor(registration.streamInterceptorType)
 
         ## TODO: We'll be moving to ABC Meta class for StreamInterceptor abstract classes
         ## --> Therefore the validation process and the corresponding pytest tests will likely change
+        return None
 
     def __len__(self) -> int:
         return len(self._sock)
@@ -150,7 +247,7 @@ class ProxyConnections:
         clientToProxySocket.setblocking(blocking)
         proxyToServerSocket.setblocking(blocking)
         ## We then create a new proxyTunnel
-        proxyTunnel = ProxyTunnel(clientToProxySocket, proxyToServerSocket, self.streamInterceptorType)
+        proxyTunnel = ProxyTunnel(clientToProxySocket, proxyToServerSocket, self.streamInterceptorRegistration)
         self._sock[clientToProxySocket] = proxyTunnel
         self._sock[proxyToServerSocket] = proxyTunnel
 
@@ -180,7 +277,7 @@ class ProxyConnections:
                 
 
     def closeAllTunnels(self) -> None:
-        proxyTunnels = {tunnel for tunnel in self._sock.values()}
+        proxyTunnels = set(self._sock.values())
         for tunnel in proxyTunnels:
             self.closeTunnel(tunnel)
 
@@ -211,7 +308,14 @@ class TCPProxyServer:
     PORT: int
     PROXY_HOST: str
     PROXY_PORT: int
-    streamInterceptorType: Type[StreamInterceptor]
+    streamInterceptorRegistration: Tuple[
+                                            Union[
+                                                    Tuple[Tuple[StreamInterceptorRegister, ...], Tuple[StreamInterceptorRegister, ...]],
+                                                    StreamInterceptorRegister
+                                                ]
+                                        ] = field(default_factory=tuple)
+
+    MESSAGE_DELIMITERS: List[bytes] = (b"\r\n",)
     addressReuse: bool = field(default=False)
 
     serverSocket: socket.socket = field(init=False, repr=False)
@@ -238,7 +342,7 @@ class TCPProxyServer:
 
     def _setupDataStructures(self):
         self.selector = selectors.DefaultSelector()
-        self.proxyConnections = ProxyConnections(self.PROXY_HOST, self.PROXY_PORT, self.streamInterceptorType, self.selector)
+        self.proxyConnections = ProxyConnections(self.PROXY_HOST, self.PROXY_PORT, self.streamInterceptorRegistration, self.selector)
         self._setupServerSocket()
 
 
@@ -249,6 +353,7 @@ class TCPProxyServer:
         try:
             signal.signal(signal.SIGINT, self._sigHandler)
         except AttributeError: pass ## Avoid errors caused by OS differences
+        # breakpoint()
 
 
     def run(self) -> None:
