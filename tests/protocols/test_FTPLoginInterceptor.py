@@ -6,12 +6,15 @@ import pytest
 import inspect
 import os
 import sys
+import socket
+from typing import Tuple, Generator, List
 sys.path.insert(0, os.path.join("src"))
 sys.path.insert(0, os.path.join("..", "src"))
 sys.path.insert(0, os.path.join("..", "..", "src"))
-
-from ftp_proxyinterceptor import FTPProxyInterceptor, FTPLoginProxyInterceptor
-
+sys.path.insert(0, os.path.join("tests", "testhelper"))
+# sys.path.insert(0, os.path.join("..", "tests", "testhelper"))
+from ftp_proxyinterceptor import FTPProxyInterceptor, FTPLoginProxyInterceptor, FTPDataConnectionHandler
+from DataTransferSimulator import TelnetClientSimulator
 
 
 ## NOTE: caplog is a pytest fixture for capturing logs
@@ -604,6 +607,7 @@ class Test_FTPLoginProxyInterceptor_Init:
     def test_init(self): raise NotImplementedError()
 
 class Test_FTPLoginProxyInterceptor:
+
     def _simulateCommSequence(self, sequence, fpi):
         isClientSender = True
         for message in sequence:
