@@ -13,7 +13,7 @@ sys.path.insert(0, "src")
 sys.path.insert(0, "testhelper")
 
 from tcp_proxyserver import ProxyTunnel, ProxyConnections, TCPProxyServer
-from _proxyDS import Buffer, StreamInterceptor
+from _proxyDS import Buffer, StreamInterceptor, StreamInterceptorRegister
 from _exceptions import *
 from tests.testhelper.ThreadedEchoServer import EchoServer
 
@@ -32,17 +32,24 @@ class PTTestResources:
         serverToClientDeque = collections.deque([])
         
         class mockStreamInterceptor(StreamInterceptor):
-            MESSAGE_DELIMITERS = [b"\r\n"]
 
             class ClientToServerHook(StreamInterceptor.Hook):
+                def __init__(self, *args, **kwargs):
+                    super().__init__(*args, **kwargs)
+
                 def __call__(self, message: bytes) -> None:
                     nonlocal clientToServerDeque
                     clientToServerDeque.append(message)
+                    return message, True
 
             class ServerToClientHook(StreamInterceptor.Hook):
+                def __init__(self, *args, **kwargs):
+                    super().__init__(*args, **kwargs)
+
                 def __call__(self, message: bytes) -> None:
                     nonlocal serverToClientDeque
                     serverToClientDeque.append(message)
+                    return message, True
 
         return mockStreamInterceptor, (clientToServerDeque, serverToClientDeque)
 
@@ -98,7 +105,14 @@ class PTTestResources:
 
         ## Create ProxyTunnel
         streamInterceptor, interceptorDeques = PTTestResources.createMockStreamInterceptor()
-        pt = ProxyTunnel(clientToProxySocket, proxyToServerSocket, streamInterceptor)
+        streamInterceptorRegistration = (
+                                            (
+                                                (StreamInterceptorRegister(streamInterceptor.ClientToServerHook, False, False),),
+                                                (StreamInterceptorRegister(streamInterceptor.ServerToClientHook, False, False),),
+                                            ),
+                                    )
+
+        pt = ProxyTunnel(clientToProxySocket, proxyToServerSocket, streamInterceptorRegistration)
         hopList = [clientSocket, clientToProxySocket, proxyToServerSocket, ephemeralServerSocket]
         return pt, hopList, interceptorDeques
 
@@ -150,7 +164,6 @@ class TPSTestResources:
         assert server.PORT == PORT
         assert server.PROXY_HOST == PROXY_HOST
         assert server.PROXY_PORT == PROXY_PORT
-        assert server.streamInterceptorType == interceptor
         assert isinstance(server.selector, selectors.DefaultSelector)
 
         ## Depends if we want to be strict
@@ -167,6 +180,7 @@ class TPSTestResources:
         ## We need to check signal handlers have been set
         ## NOTE: SIGNAL types are dependent on the host system
         ## --> We'll focus on linux
+        ## BUG: This is a weak test that fails sometimes!!!
         assert signal.getsignal(signal.SIGINT) == server._sigHandler
 
     @classmethod
@@ -244,9 +258,9 @@ class TPSTestResources:
 
     ##
     @classmethod
-    def assertUserConnectionData(cls, streamInterceptorType, connections: List[socket.socket], connectionData: List[bytes]) -> None:
+    def assertUserConnectionData(cls, MESSAGE_DELIMITERS: List[bytes], connections: List[socket.socket], connectionData: List[bytes]) -> None:
+        delimiter = MESSAGE_DELIMITERS[0]
         ## We want to check that the expected data has been received
-        delimiter = streamInterceptorType.MESSAGE_DELIMITERS[0]
         for conn, sentData in zip(connections, connectionData):
 
             index = sentData.rfind(delimiter)
