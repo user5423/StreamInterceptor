@@ -90,11 +90,11 @@ class Test_ProxyTunnel_Init:
         proxyToServerSocket = clientToProxySocket
         streamInterceptor, _ = PTTestResources.createMockStreamInterceptor()
 
-        streamInterceptorRegistration = [(
+        streamInterceptorRegistration = ((
                     [StreamInterceptorRegister(streamInterceptor.ClientToServerHook, False, False),],
                     [StreamInterceptorRegister(streamInterceptor.ServerToClientHook, False, False),]
-                )
-            ]
+                ),
+            )
         with pytest.raises(ValueError) as excInfo:
             ProxyTunnel(clientToProxySocket, proxyToServerSocket, streamInterceptorRegistration)
 
@@ -107,11 +107,11 @@ class Test_ProxyTunnel_Init:
         streamInterceptor, _ = PTTestResources.createMockStreamInterceptor()
 
         PTTestResources.closeSocket(clientToProxySocket)
-        streamInterceptorRegistration = [(
-                    [StreamInterceptorRegister(streamInterceptor.ClientToServerHook, False, False),],
-                    [StreamInterceptorRegister(streamInterceptor.ServerToClientHook, False, False),]
-                )
-            ]
+        streamInterceptorRegistration = ((
+                    (StreamInterceptorRegister(streamInterceptor.ClientToServerHook, False, False),),
+                    (StreamInterceptorRegister(streamInterceptor.ServerToClientHook, False, False),)
+                ),
+        )
         with pytest.raises(ValueError) as excInfo:
             ProxyTunnel(clientToProxySocket, proxyToServerSocket, streamInterceptorRegistration)
 
@@ -126,11 +126,11 @@ class Test_ProxyTunnel_Init:
         streamInterceptor, _ = PTTestResources.createMockStreamInterceptor()
 
         PTTestResources.closeSocket(proxyToServerSocket)
-        streamInterceptorRegistration = [(
-                    [StreamInterceptorRegister(streamInterceptor.ClientToServerHook, False, False),],
-                    [StreamInterceptorRegister(streamInterceptor.ServerToClientHook, False, False),]
-                )
-            ]
+        streamInterceptorRegistration = ((
+                    (StreamInterceptorRegister(streamInterceptor.ClientToServerHook, False, False),),
+                    (StreamInterceptorRegister(streamInterceptor.ServerToClientHook, False, False),)
+                ),
+        )
         with pytest.raises(ValueError) as excInfo:
             ProxyTunnel(clientToProxySocket, proxyToServerSocket, streamInterceptorRegistration)
 
@@ -144,11 +144,11 @@ class Test_ProxyTunnel_Init:
         proxyToServerSocket = PTTestResources.createClientSocket()
         streamInterceptor, (clientToServerDeque, serverToClientDeque) = PTTestResources.createMockStreamInterceptor()
 
-        streamInterceptorRegistration = [(
-                    [StreamInterceptorRegister(streamInterceptor.ClientToServerHook, False, False),],
-                    [StreamInterceptorRegister(streamInterceptor.ServerToClientHook, False, False),]
-                )
-            ]
+        streamInterceptorRegistration = ((
+                    (StreamInterceptorRegister(streamInterceptor.ClientToServerHook, False, False),),
+                    (StreamInterceptorRegister(streamInterceptor.ServerToClientHook, False, False),)
+                ),
+        )
         
         pt = ProxyTunnel(clientToProxySocket, proxyToServerSocket, streamInterceptorRegistration)
 
