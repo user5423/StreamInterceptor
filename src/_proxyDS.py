@@ -32,18 +32,44 @@ class StreamInterceptor:
     class ServerToClientHook(Hook): ...
 
 
+
+
 @dataclass(frozen=True, eq=False)
-class StreamInterceptorRegister:
+class _StreamInterceptorRegister:
     streamInterceptorType: Type[StreamInterceptor.Hook]
     isTransparent: bool
     isShared: bool
 
+
 @dataclass(frozen=True, eq=False)
-class StreamInterceptorDescriptor:
+class PrivateStreamInterceptorRegister(_StreamInterceptorRegister):
+    callbackArgument: str = "message"
+
+
+@dataclass(frozen=True, eq=False)
+class SharedStreamInterceptorRegister(_StreamInterceptorRegister):
+    clientToServerCallbackArgument: str = "req"
+    serverToClientCallbackArgument: str = "resp"
+
+
+
+@dataclass(frozen=True, eq=False)
+class _StreamInterceptorDescriptor:
     streamInterceptor: StreamInterceptor.Hook
     isTransparent: bool
     isShared: bool
-    callbackArgument: Union["request", "response"]
+
+
+@dataclass(frozen=True, eq=False)
+class PrivateStreamInterceptorDescriptor(_StreamInterceptorDescriptor):
+    callbackArgument: str = "message"
+
+
+@dataclass(frozen=True, eq=False)
+class SharedStreamInterceptorDescriptor(_StreamInterceptorDescriptor):
+    callbackArgument: str = Union["req", "resp"]
+
+
 
 class StreamInterceptorHelperMixin:
     @classmethod
@@ -105,16 +131,19 @@ class StreamInterceptorHelperMixin:
     
     ## TODO: May need to replace the two buffer arguments with the whole proxyTunnel
     @classmethod
-    def _setupSharedHookCallable(cls, hook: Type[Callable[["Buffer"], None]], clientToServerBuffer: "Buffer", serverToClientBuffer: "Buffer", server: Optional["TCPProxyServer"] = None) -> Callable:
-        if isinstance(hook, types.FunctionType) and not inspect.isgeneratorfunction(hook):
-            _hook = functools.partial(hook, server=server, clientToServerBuffer=clientToServerBuffer, serverToClientBuffer=serverToClientBuffer)
-        elif inspect.isgeneratorfunction(hook):
+    def _setupSharedHookCallable(cls, hook: Type[Callable[["Buffer"], None]], clientToServerBuffer: "Buffer", serverToClientBuffer: "Buffer", server: Optional["TCPProxyServer"] = None, nonDefaultArgs: Iterable[Any] = (), nonDefaultKwargs: Dict = {}) -> Callable:
+        if inspect.isgeneratorfunction(hook):
+            hook = cls._bindNonDefaultGeneratorArgs(hook, nonDefaultArgs, nonDefaultKwargs)
             _hook = hook(server=server, clientToServerBuffer=clientToServerBuffer, serverToClientBuffer=serverToClientBuffer)
             next(_hook)
-        elif hasattr(hook, "__init__") and hasattr(hook, "__call__"):
+        elif isinstance(hook, type) and hasattr(hook, "__init__") and hasattr(hook, "__call__"):
+            hook = cls._bindNonDefaultFunctorArgs(hook, nonDefaultArgs, nonDefaultKwargs)
             _hook = hook(server=server, clientToServerBuffer=clientToServerBuffer, serverToClientBuffer=serverToClientBuffer)
+        elif inspect.isfunction(hook):
+            hook = cls._bindNonDefaultFunctionArgs(hook, nonDefaultArgs, nonDefaultKwargs)
+            _hook = functools.partial(hook, server=server, clientToServerBuffer=clientToServerBuffer, serverToClientBuffer=serverToClientBuffer)
         else:
-            raise TypeError(f"The type of {type(hook)} is currently not supported for setting shared hooks")
+            raise TypeError(f"The type of {type(hook)} is currently not supported for setting private hooks")
 
         return _hook
        
@@ -155,9 +184,20 @@ class StreamInterceptorHelperMixin:
 
 ## TODO: Fix mixing between bytearray and byte types!!!
 ## TODO: Fix incorrectly assigned methods of being private vs public
+
+from enum import Enum
+
+class CommsDirection(Enum):
+    CLIENT_TO_SERVER = 1
+    SERVER_TO_CLIENT = 1
+
+
+
+
 @dataclass
 class Buffer(StreamInterceptorHelperMixin):
     MESSAGE_DELIMITERS: List[bytes]
+    COMMUNICATION_DIRECTION: CommsDirection
     _incomingData: bytearray = field(init=False, default_factory=bytearray)
     _outgoingData: bytearray = field(init=False, default_factory=bytearray)
     _messages: deque[bytes] = field(init=False, default_factory=deque)
@@ -281,7 +321,6 @@ class Buffer(StreamInterceptorHelperMixin):
     def _executeHooks(self, message) -> Tuple[Optional[bytes], bool]:
         ## NOTE: We need to keep track of which hooks we have executed (so we don't repeat unneccessarily their execution) - self._hookIndex
         continueProcessing = False
-
         for self._hookIndex, streamInterceptorDescriptor in enumerate(self._hooks[self._hookIndex:], self._hookIndex):
             hook = streamInterceptorDescriptor.streamInterceptor
             isTransparent = streamInterceptorDescriptor.isTransparent
@@ -352,8 +391,7 @@ class Buffer(StreamInterceptorHelperMixin):
         isShared = False
         isTransparent = False
         nonTransparentHook = self._setupHookCallable(hook, self, server, hookArgs, hookKwargs)
-        callbackArgument = None
-        self._hooks.append(StreamInterceptorDescriptor(nonTransparentHook, isTransparent, isShared, callbackArgument))
+        self._hooks.append(PrivateStreamInterceptorDescriptor(nonTransparentHook, isTransparent, isShared))
         return None
 
     def setTransparentHook(self, hook: Type[Callable[["Buffer"], None]], server: Optional["TCPProxyServer"] = None, hookArgs: Iterable[Any] = (), hookKwargs: Dict[str, Any] = {}) -> None:
@@ -363,20 +401,19 @@ class Buffer(StreamInterceptorHelperMixin):
         isShared = False
         isTransparent = True
         transparentHook = self._setupHookCallable(hook, self, server, hookArgs, hookKwargs)
-        callbackArgument = None
-        self._hooks.append(StreamInterceptorDescriptor(transparentHook, isTransparent, isShared, callbackArgument))
+        self._hooks.append(PrivateStreamInterceptorDescriptor(transparentHook, isTransparent, isShared))
         return None
 
-    def setSharedNonTransparentHook(self, hook: Callable[["Buffer"], None], callbackArgument: Union["request", "response"], server: Optional["TCPProxyServer"] = None) -> None:
+    def setSharedNonTransparentHook(self, hook: Callable[["Buffer"], None], callbackArgument: str, server: Optional["TCPProxyServer"] = None) -> None:
         isShared = True
         isTransparent = False
-        self._hooks.append(StreamInterceptorDescriptor(hook, isTransparent, isShared, callbackArgument))
+        self._hooks.append(SharedStreamInterceptorDescriptor(hook, isTransparent, isShared, callbackArgument))
         return None
 
-    def setSharedTransparentHook(self, hook: Callable[["Buffer"], None], callbackArgument: Union["request", "response"], server: Optional["TCPProxyServer"] = None) -> None:
+    def setSharedTransparentHook(self, hook: Callable[["Buffer"], None], callbackArgument: str, server: Optional["TCPProxyServer"] = None) -> None:
         isShared = True
         isTransparent = True
-        self._hooks.append(StreamInterceptorDescriptor(hook, isTransparent, isShared, callbackArgument))
+        self._hooks.append(SharedStreamInterceptorDescriptor(hook, isTransparent, isShared, callbackArgument))
         return None
 
 

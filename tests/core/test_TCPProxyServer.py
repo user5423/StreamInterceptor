@@ -21,7 +21,7 @@ from tests.testhelper.TestResources import PTTestResources,TPSTestResources
 
 sys.path.insert(0, os.path.join("..", "src"))
 sys.path.insert(0, "src")
-from tcp_proxyserver import ProxyConnections, TCPProxyServer, ProxyTunnel, StreamInterceptorRegister
+from tcp_proxyserver import ProxyConnections, TCPProxyServer, ProxyTunnel, PrivateStreamInterceptorRegister, SharedStreamInterceptorRegister
 from _exceptions import *
 from _proxyDS import StreamInterceptor, Buffer
 
@@ -34,8 +34,8 @@ def createTCPProxyServer():
     HOST, PORT = "127.0.0.1", 8080
     streamInterceptor, _ = PTTestResources.createMockStreamInterceptor()
     streamInterceptorRegistration = ((
-                (StreamInterceptorRegister(streamInterceptor.ClientToServerHook, False, False),),
-                (StreamInterceptorRegister(streamInterceptor.ServerToClientHook, False, False),)
+                (PrivateStreamInterceptorRegister(streamInterceptor.ClientToServerHook, False, False),),
+                (PrivateStreamInterceptorRegister(streamInterceptor.ServerToClientHook, False, False),)
             ),
     )
     ## first we need to kill any processes running on the (HOST, PORT)

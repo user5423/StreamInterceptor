@@ -12,7 +12,10 @@ from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple, Type, NamedTuple, List, Union, Iterable
 
-from _proxyDS import Buffer, proxyHandlerDescriptor, StreamInterceptor, StreamInterceptorDescriptor, StreamInterceptorRegister, StreamInterceptorHelperMixin
+from _proxyDS import Buffer, CommsDirection, proxyHandlerDescriptor, StreamInterceptor, PrivateStreamInterceptorDescriptor, \
+                    SharedStreamInterceptorDescriptor, PrivateStreamInterceptorRegister, SharedStreamInterceptorRegister, \
+                    StreamInterceptorHelperMixin
+
 from _exceptions import *
 ## TODO: Replace default exceptions with custom exceptions
 ## TODO: Implement Context management for TCPProxyServer
@@ -49,8 +52,8 @@ class ProxyTunnel(StreamInterceptorHelperMixin):
     ## TODO: Abstract these types out
     streamInterceptorRegistration: Tuple[
                                             Union[
-                                                    Tuple[Tuple[StreamInterceptorRegister, ...], Tuple[StreamInterceptorRegister, ...]],
-                                                    StreamInterceptorRegister
+                                                    Tuple[Tuple[PrivateStreamInterceptorRegister, ...], Tuple[PrivateStreamInterceptorRegister, ...]],
+                                                    SharedStreamInterceptorRegister
                                                 ]
                                         ]
  
@@ -61,15 +64,15 @@ class ProxyTunnel(StreamInterceptorHelperMixin):
 
     def __post_init__(self):
         ## Setup Bidirectional Buffers
-        self.serverToClientBuffer = Buffer([b"\r\n"])
-        self.clientToServerBuffer = Buffer([b"\r\n"])
+        self.serverToClientBuffer = Buffer([b"\r\n"], CommsDirection.CLIENT_TO_SERVER)
+        self.clientToServerBuffer = Buffer([b"\r\n"], CommsDirection.SERVER_TO_CLIENT)
 
         ## Set hooks on Bidirectional Buffers
         self._registerStreamInterceptors()
  
     ## -------------- INTERCEPTOR REGISTRATION LOGIC START ------------------------------
 
-    def _registerPrivateBufferHooks(self, buffer: Buffer, registrations: List[StreamInterceptorRegister]) -> None:
+    def _registerPrivateBufferHooks(self, buffer: Buffer, registrations: List[PrivateStreamInterceptorRegister]) -> None:
         for registration in registrations:
             streamInterceptorType = registration.streamInterceptorType
             isTransparent = registration.isTransparent
@@ -81,17 +84,17 @@ class ProxyTunnel(StreamInterceptorHelperMixin):
 
         return None
 
-    def _registerSharedBufferHook(self, registration: StreamInterceptorRegister) -> None:
+    def _registerSharedBufferHook(self, registration: SharedStreamInterceptorRegister) -> None:
         streamInterceptorType = registration.streamInterceptorType
         streamInterceptor = self._setupSharedHookCallable(streamInterceptorType, self.clientToServerBuffer, self.serverToClientBuffer)
         isTransparent = registration.isTransparent
 
         if isTransparent:
-            self.clientToServerBuffer.setSharedTransparentHook(streamInterceptor)
-            self.serverToClientBuffer.setSharedTransparentHook(streamInterceptor)
+            self.clientToServerBuffer.setSharedTransparentHook(streamInterceptor, registration.clientToServerCallbackArgument)
+            self.serverToClientBuffer.setSharedTransparentHook(streamInterceptor, registration.serverToClientCallbackArgument)
         else:
-            self.clientToServerBuffer.setSharedNonTransparentHook(streamInterceptor)
-            self.serverToClientBuffer.setSharedNonTransparentHook(streamInterceptor)
+            self.clientToServerBuffer.setSharedNonTransparentHook(streamInterceptor, registration.clientToServerCallbackArgument)
+            self.serverToClientBuffer.setSharedNonTransparentHook(streamInterceptor, registration.serverToClientCallbackArgument)
 
         return None
 
@@ -187,8 +190,8 @@ class ProxyConnections:
     PROXY_PORT: int
     streamInterceptorRegistration: Tuple[
                                             Union[
-                                                    Tuple[Tuple[StreamInterceptorRegister, ...], Tuple[StreamInterceptorRegister, ...]],
-                                                    StreamInterceptorRegister
+                                                    Tuple[Tuple[PrivateStreamInterceptorRegister, ...], Tuple[PrivateStreamInterceptorRegister, ...]],
+                                                    SharedStreamInterceptorRegister
                                                 ]
                                         ]
     selector: selectors.BaseSelector
@@ -218,11 +221,11 @@ class ProxyConnections:
             if isinstance(element, tuple) and len(element) == 2:
                 for l in element:
                     for registration in l:
-                        assert isinstance(registration, StreamInterceptorRegister)
+                        assert isinstance(registration, PrivateStreamInterceptorRegister)
                         self._validateStreamInterceptor(registration.streamInterceptorType)
             else:
                 registration = element
-                assert isinstance(registration, StreamInterceptorRegister)
+                assert isinstance(registration, SharedStreamInterceptorRegister)
                 self._validateStreamInterceptor(registration.streamInterceptorType)
 
         ## TODO: We'll be moving to ABC Meta class for StreamInterceptor abstract classes
@@ -310,8 +313,8 @@ class TCPProxyServer:
     PROXY_PORT: int
     streamInterceptorRegistration: Tuple[
                                             Union[
-                                                    Tuple[Tuple[StreamInterceptorRegister, ...], Tuple[StreamInterceptorRegister, ...]],
-                                                    StreamInterceptorRegister
+                                                    Tuple[Tuple[PrivateStreamInterceptorRegister, ...], Tuple[PrivateStreamInterceptorRegister, ...]],
+                                                    SharedStreamInterceptorRegister
                                                 ]
                                         ] = field(default_factory=tuple)
 

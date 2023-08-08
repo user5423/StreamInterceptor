@@ -13,7 +13,7 @@ sys.path.insert(0, "src")
 sys.path.insert(0, "testhelper")
 
 from tcp_proxyserver import ProxyTunnel, ProxyConnections, TCPProxyServer
-from _proxyDS import Buffer, StreamInterceptor, StreamInterceptorRegister
+from _proxyDS import Buffer, CommsDirection, StreamInterceptor, PrivateStreamInterceptorRegister, SharedStreamInterceptorRegister
 from _exceptions import *
 from tests.testhelper.ThreadedEchoServer import EchoServer
 
@@ -107,8 +107,8 @@ class PTTestResources:
         streamInterceptor, interceptorDeques = PTTestResources.createMockStreamInterceptor()
         streamInterceptorRegistration = (
                                             (
-                                                (StreamInterceptorRegister(streamInterceptor.ClientToServerHook, False, False),),
-                                                (StreamInterceptorRegister(streamInterceptor.ServerToClientHook, False, False),),
+                                                (PrivateStreamInterceptorRegister(streamInterceptor.ClientToServerHook, False, False),),
+                                                (PrivateStreamInterceptorRegister(streamInterceptor.ServerToClientHook, False, False),),
                                             ),
                                     )
 
@@ -308,7 +308,7 @@ class TPSTestResources:
         ## -- It's possible to define multiple delimiters
         ## Our check will compare with a single run of the buffer on flat data
         ## --> i.e. instead of multiple chunks, a single chunk is sent
-        flatBuffer = Buffer(testBuffer.MESSAGE_DELIMITERS)
+        flatBuffer = Buffer(testBuffer.MESSAGE_DELIMITERS, CommsDirection.CLIENT_TO_SERVER)
         flatBuffer.write(testData)
 
         ## And then we will manually compare state between both buffers

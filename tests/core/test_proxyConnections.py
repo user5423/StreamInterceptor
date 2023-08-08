@@ -8,7 +8,7 @@ from typing import List
 sys.path.insert(0, os.path.join("..", "src"))
 sys.path.insert(0, "src")
 from tcp_proxyserver import ProxyConnections, ProxyTunnel
-from _proxyDS import StreamInterceptor, StreamInterceptorRegister
+from _proxyDS import StreamInterceptor, SharedStreamInterceptorDescriptor, PrivateStreamInterceptorDescriptor, PrivateStreamInterceptorRegister, SharedStreamInterceptorRegister
 from tests.testhelper.TestResources import PTTestResources
 from _exceptions import *
 
@@ -87,8 +87,8 @@ class Test_ProxyConnections_Init:
         streamInterceptor, _ = PTTestResources.createMockStreamInterceptor()
         selector = selectors.DefaultSelector()
         streamInterceptorRegistration = ((
-                (StreamInterceptorRegister(streamInterceptor.ClientToServerHook, False, False),),
-                (StreamInterceptorRegister(streamInterceptor.ServerToClientHook, False, False),)
+                (PrivateStreamInterceptorRegister(streamInterceptor.ClientToServerHook, False, False),),
+                (PrivateStreamInterceptorRegister(streamInterceptor.ServerToClientHook, False, False),)
             ),
         )
         pc = ProxyConnections(PROXY_HOST, PROXY_PORT, streamInterceptorRegistration, selector)
@@ -98,8 +98,8 @@ class Test_ProxyConnections_Init:
     def _assertInvalidHostArgs(self, PROXY_HOST, PROXY_PORT, errorMessageSnippet) -> None:
         streamInterceptor, _ = PTTestResources.createMockStreamInterceptor()
         streamInterceptorRegistration = ((
-                (StreamInterceptorRegister(streamInterceptor.ClientToServerHook, False, False),),
-                (StreamInterceptorRegister(streamInterceptor.ServerToClientHook, False, False),)
+                (PrivateStreamInterceptorRegister(streamInterceptor.ClientToServerHook, False, False),),
+                (PrivateStreamInterceptorRegister(streamInterceptor.ServerToClientHook, False, False),)
             ),
         )
         selector = selectors.DefaultSelector()
@@ -183,8 +183,8 @@ class Test_ProxyConnections_Init:
         PROXY_HOST, PROXY_PORT = "127.0.0.1", 80
         streamInterceptor = StreamInterceptor
         streamInterceptorRegistration = ((
-                (StreamInterceptorRegister(streamInterceptor.ClientToServerHook, False, False),),
-                (StreamInterceptorRegister(streamInterceptor.ServerToClientHook, False, False),)
+                (PrivateStreamInterceptorRegister(streamInterceptor.ClientToServerHook, False, False),),
+                (PrivateStreamInterceptorRegister(streamInterceptor.ServerToClientHook, False, False),)
             ),
         )
 
@@ -207,8 +207,8 @@ class Test_ProxyConnections_Init:
 
         streamInterceptor = StreamInterceptor_incompleteClientToServerHook
         streamInterceptorRegistration = ((
-                (StreamInterceptorRegister(streamInterceptor.ClientToServerHook, False, False),),
-                (StreamInterceptorRegister(streamInterceptor.ServerToClientHook, False, False),)
+                (PrivateStreamInterceptorRegister(streamInterceptor.ClientToServerHook, False, False),),
+                (PrivateStreamInterceptorRegister(streamInterceptor.ServerToClientHook, False, False),)
             ),
         )
         with pytest.raises(TypeError) as excInfo:
@@ -232,8 +232,8 @@ class Test_ProxyConnections_Init:
 
         streamInterceptor = StreamInterceptor_incompleteServerToClientHook
         streamInterceptorRegistration = ((
-                (StreamInterceptorRegister(streamInterceptor.ClientToServerHook, False, False),),
-                (StreamInterceptorRegister(streamInterceptor.ServerToClientHook, False, False),)
+                (PrivateStreamInterceptorRegister(streamInterceptor.ClientToServerHook, False, False),),
+                (PrivateStreamInterceptorRegister(streamInterceptor.ServerToClientHook, False, False),)
             ),
         )
         with pytest.raises(TypeError) as excInfo:
@@ -247,8 +247,8 @@ class Test_ProxyConnections_Init:
         PROXY_HOST, PROXY_PORT = "127.0.0.1", 80
         streamInterceptor, _ = PTTestResources.createMockStreamInterceptor()
         streamInterceptorRegistration = ((
-                (StreamInterceptorRegister(streamInterceptor.ClientToServerHook, False, False),),
-                (StreamInterceptorRegister(streamInterceptor.ServerToClientHook, False, False),)
+                (PrivateStreamInterceptorRegister(streamInterceptor.ClientToServerHook, False, False),),
+                (PrivateStreamInterceptorRegister(streamInterceptor.ServerToClientHook, False, False),)
             ),
         )
         selector = selectors.DefaultSelector()
@@ -262,8 +262,8 @@ def createPC():
     streamInterceptor, _ = PTTestResources.createMockStreamInterceptor()
     selector = selectors.DefaultSelector()
     streamInterceptorRegistration = ((
-            (StreamInterceptorRegister(streamInterceptor.ClientToServerHook, False, False),),
-            (StreamInterceptorRegister(streamInterceptor.ServerToClientHook, False, False),)
+            (PrivateStreamInterceptorRegister(streamInterceptor.ClientToServerHook, False, False),),
+            (PrivateStreamInterceptorRegister(streamInterceptor.ServerToClientHook, False, False),)
         ),
     )
     pc = ProxyConnections(PROXY_HOST, PROXY_PORT, streamInterceptorRegistration, selector)

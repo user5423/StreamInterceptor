@@ -6,7 +6,7 @@ import pytest
 
 sys.path.insert(0, os.path.join("..", "src"))
 sys.path.insert(0, "src")
-from _proxyDS import Buffer
+from _proxyDS import Buffer, CommsDirection
 
 from typing import Optional
 
@@ -38,7 +38,7 @@ class BufferReqParsingHelpers:
 def oneLenDelimiterTestSetup():
     delimiters = [b"\r"]
     delimiter = delimiters[0]
-    b = Buffer(delimiters)
+    b = Buffer(delimiters, CommsDirection.CLIENT_TO_SERVER)
     transparentQueue = BufferReqParsingHelpers._setupTransparentHookMock(b)
     nonTransparentQueue = BufferReqParsingHelpers._setupNonTransparentHookMock(b)
     yield b, transparentQueue, nonTransparentQueue
@@ -47,7 +47,7 @@ def oneLenDelimiterTestSetup():
 def twoLenDelimiterTestSetup():
     delimiters = [b"\r\n"]
     delimiter = delimiters[0]
-    b = Buffer(delimiters)
+    b = Buffer(delimiters, CommsDirection.CLIENT_TO_SERVER)
     transparentQueue = BufferReqParsingHelpers._setupTransparentHookMock(b)
     nonTransparentQueue = BufferReqParsingHelpers._setupNonTransparentHookMock(b)
     yield b, transparentQueue, nonTransparentQueue
@@ -56,7 +56,7 @@ def twoLenDelimiterTestSetup():
 def manyLenDelimiterTestSetup():
     delimiters = [b"\r\n\r\n"]
     delimiter = delimiters[0]
-    b = Buffer(delimiters)
+    b = Buffer(delimiters, CommsDirection.CLIENT_TO_SERVER)
     transparentQueue = BufferReqParsingHelpers._setupTransparentHookMock(b)
     nonTransparentQueue = BufferReqParsingHelpers._setupNonTransparentHookMock(b)
     yield b, transparentQueue, nonTransparentQueue

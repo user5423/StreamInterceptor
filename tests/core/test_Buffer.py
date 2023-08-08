@@ -8,25 +8,27 @@ from typing import Tuple, Dict
 
 sys.path.insert(0, os.path.join("..", "src"))
 sys.path.insert(0, "src")
-from _proxyDS import Buffer
+from _proxyDS import Buffer, CommsDirection
 from _exceptions import *
+
 ## Buffer Initiatialization
 
 @pytest.fixture()
 def defaultBuffer() -> Buffer:
     delimiters = [b"\r\n"]
-    b = Buffer(delimiters)
+    b = Buffer(delimiters, CommsDirection.CLIENT_TO_SERVER)
     return b
 
 
 @pytest.fixture()
 def nonparsingBuffer() -> Buffer:
     delimiters = [b"\r\n"]
-    b = Buffer(delimiters)
+    b = Buffer(delimiters, CommsDirection.CLIENT_TO_SERVER)
     b._execMessageParsing = lambda *args, **kwargs: None
     return b
 
 
+## TODO: Write more tests for CommsDirection parameter
 class Test_Buffer_Init:
     def test_default(self) -> None:
         ## NOTE: A default constructor is not allowed
@@ -34,12 +36,13 @@ class Test_Buffer_Init:
             Buffer()
             
         assert "MESSAGE_DELIMITERS" in str(excInfo.value)
+        assert "COMMUNICATION_DIRECTION" in str(excInfo.value)
         
         
     def test_MessageDelimiters_incorrectType(self) -> None:
         MESSAGE_DELIMITERS = None
         with pytest.raises(IncorrectDelimitersTypeError) as excInfo:
-            Buffer(MESSAGE_DELIMITERS)
+            Buffer(MESSAGE_DELIMITERS, CommsDirection.CLIENT_TO_SERVER)
             
         assert "Incorrect type" in str(excInfo.value)
         assert "[i]" not in str(excInfo.value)   
@@ -48,14 +51,14 @@ class Test_Buffer_Init:
     def test_MessageDelimiters_empty(self) -> None:
         MESSAGE_DELIMITERS = []
         with pytest.raises(EmptyDelimitersTypeError) as excInfo:
-            Buffer(MESSAGE_DELIMITERS)
+            Buffer(MESSAGE_DELIMITERS, CommsDirection.CLIENT_TO_SERVER)
             
         assert "Cannot pass empty" in str(excInfo.value)
         
 
     def test_MessageDelimiters_single(self) -> None:
         MESSAGE_DELIMITERS = [b"\r\n"]
-        b = Buffer(MESSAGE_DELIMITERS)
+        b = Buffer(MESSAGE_DELIMITERS, CommsDirection.CLIENT_TO_SERVER)
         assert b.MESSAGE_DELIMITERS == MESSAGE_DELIMITERS
         assert isinstance(b._incomingData, bytearray) and len(b._incomingData) == 0
         assert isinstance(b._outgoingData, bytearray) and len(b._outgoingData) == 0
@@ -65,7 +68,7 @@ class Test_Buffer_Init:
     def test_MessageDelimiters_many(self) -> None:
         ## NOTE: The order of the delimiters is important for when message can have multiple potential delimiters
         MESSAGE_DELIMITERS = [b"\r\n", b"\r"]
-        b = Buffer(MESSAGE_DELIMITERS)
+        b = Buffer(MESSAGE_DELIMITERS, CommsDirection.CLIENT_TO_SERVER)
         assert b.MESSAGE_DELIMITERS == MESSAGE_DELIMITERS
         assert isinstance(b._incomingData, bytearray) and len(b._incomingData) == 0
         assert isinstance(b._outgoingData, bytearray) and len(b._outgoingData) == 0
@@ -76,7 +79,7 @@ class Test_Buffer_Init:
         ## NOTE: Duplicates delimitesr are bad practice
         MESSAGE_DELIMITERS = [b"\r\n", b"\r", b"\r\n"]
         with pytest.raises(DuplicateDelimitersError) as excInfo:
-            Buffer(MESSAGE_DELIMITERS)
+            Buffer(MESSAGE_DELIMITERS, CommsDirection.CLIENT_TO_SERVER)
         
         assert "Duplicate" in str(excInfo.value)
         
