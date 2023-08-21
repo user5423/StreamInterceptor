@@ -12,7 +12,6 @@ proxyHandlerDescriptor = NamedTuple("ProxyHandlerData", [("PROXY_HOST", str), ("
 
 
 
-
 ## TODO: Use ABCs to create abstract class
 ## NOTE: We will subclass this for the Stream Interceptor
 ## NOTE: This should be performed on a per protocol basis!!!
@@ -67,28 +66,21 @@ class PrivateStreamInterceptorDescriptor(_StreamInterceptorDescriptor):
 
 @dataclass(frozen=True, eq=False)
 class SharedStreamInterceptorDescriptor(_StreamInterceptorDescriptor):
-    callbackArgument: str = Union["req", "resp"]
+    callbackArgument: Union["req", "resp"]
+
+
+
+StreamInterceptorRegistration = Tuple[
+                                        Union[
+                                                Tuple[Tuple[PrivateStreamInterceptorRegister, ...], Tuple[PrivateStreamInterceptorRegister, ...]],
+                                                SharedStreamInterceptorRegister
+                                            ]
+                                    ]
+
 
 
 
 class StreamInterceptorHelperMixin:
-    @classmethod
-    # def _setupHookCallable(cls, hook: Type[Callable[["Buffer", "TCPServer"], None]], buffer: "Buffer", server: Optional["TCPProxyServer"] = None) -> Callable:
-    #     ## If it is a function, then we bind the server and buffer variables to the function
-    #     if isinstance(hook, types.FunctionType) and not inspect.isgeneratorfunction(hook):
-    #         _hook = functools.partial(hook, server=server, buffer=buffer)
-    #     ## If it is a generators a function (i.e. a func that returns a generator), we need to execute a single next() statement before we can perform .send() later
-    #     ## This essentially execute the setup code which would correspond to __init__() in a functor
-    #     elif inspect.isgeneratorfunction(hook):
-    #         _hook = hook(server=server, buffer=buffer)
-    #         next(_hook)
-    #     ## If it is a functor (i.e. has a __init__ and __call__ method), then we call the constructor+initializer
-    #     elif hasattr(hook, "__init__") and hasattr(hook, "__call__"):
-    #         _hook = hook(server=server, buffer=buffer)
-    #     else:
-    #         raise TypeError(f"The type of {type(hook)} is currently not supported for setting private hooks")
-
-    #     return _hook
 
     @classmethod
     def _bindNonDefaultFunctionArgs(cls, hookType: "Function", args: Iterable[Any], kwargs: Dict[str, Any]):
@@ -105,8 +97,6 @@ class StreamInterceptorHelperMixin:
             __init__ = functools.partialmethod(hookType.__init__, *args, **kwargs)
 
         return BoundFunctor
-
-
 
     @classmethod
     def _setupHookCallable(cls, hook: Type[Callable[["Buffer", "TCPServer"], None]], buffer: "Buffer", server: Optional["TCPProxyServer"] = None, nonDefaultArgs: Iterable[Any] = (), nonDefaultKwargs: Dict = {}) -> Callable:
@@ -158,6 +148,15 @@ class StreamInterceptorHelperMixin:
             if isShared:
                 return hook(**{callbackArgument: message})
             return hook(message)
+
+
+    @classmethod
+    def _prependSharedHook(cls, streamInterceptorRegistration: StreamInterceptorRegistration, sharedHookRegister: SharedStreamInterceptorRegister) -> StreamInterceptorRegistration:
+        return tuple([sharedHookRegister] + list(streamInterceptorRegistration))
+
+    @classmethod
+    def _prependPrivateHook(self, streamInterceptorRegistration: StreamInterceptorRegistration, privateHookRegister: PrivateStreamInterceptorRegister) -> StreamInterceptorRegistration:
+        raise NotImplementedError()
 
 ## BUG: There exist methods that manipulate both buffer._data and buffer._messages
 ## -- This should NOT be the case
@@ -290,6 +289,7 @@ class Buffer(StreamInterceptorHelperMixin):
 
     ############ Message Parsing and Hook Mechanisms ################
     def _executeMessageParser(self) -> None:
+        # breakpoint()
         ## Split up incoming data buffer into messages onto a queue
         delimiters = [m.end() for m in re.finditer(self.MESSAGE_DELIMITER_REGEX, self._incomingData)]
         leftIndex = 0
@@ -330,6 +330,7 @@ class Buffer(StreamInterceptorHelperMixin):
             ## A non-transparent proxy can modify the message AND control its flow
             if not isTransparent:
                 modifiedMessage, continueProcessing = self._executeHook(hook, message, isShared, callbackArgument)
+                # breakpoint()
                 if not continueProcessing:
                     return None, continueProcessing
                 message = modifiedMessage
