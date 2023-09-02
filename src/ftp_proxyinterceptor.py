@@ -1,4 +1,5 @@
 import re
+import errno
 import logging
 import selectors
 import collections
@@ -7,35 +8,39 @@ import socket
 from typing import Optional, Tuple, Dict, Generator, FrozenSet, Union, Any
 
 from _proxyDS import StreamInterceptor, Buffer
-from tcp_proxyserver import TCPProxyServer, ProxyTunnel
+from tcp_proxyserver import TCPProxyServer, ProxyTunnel, Delimiters
 
 from abc import abstractmethod, ABCMeta
 
 DataConnType = Union["ACTIVE", "PASSIVE"]
 
-class FTPProxyInterceptor(StreamInterceptor, metaclass=ABCMeta):
-    def __init__(self) -> None:
+class FTPProxyInterceptor(StreamInterceptor.Hook, metaclass=ABCMeta):
+    clientToServerCallbackArgument = "request"
+    serverToClientCallbackArgument = "response"
+    
+    def __init__(self, server: "FTPProxyServer", buffer: Buffer) -> None:
         super().__init__()
+        self.server = server
+        self.buffer = buffer
         ## Here are the requests
         self._requestQueue = collections.deque()
         self._responseQueue = collections.deque()
         self._stateGenerator = self._createStateGenerator()
-        self.MESSAGE_DELIMITERS = [b"\r\n", b"\r"]
+        self.MESSAGE_DELIMITERS = (Delimiters.CRLF, Delimiters.LF,)
 
     ## NOTE: These methods assume that the there is at least one delimited reqeust in buffer
     ## NOTE: These methods assume that the correct buffer has been passed as an argument
-    def clientToServerRequestHook(self, buffer: Buffer) -> None:
-        ## we retrieve a request from the buffer
-        request, _ = buffer.popFromQueue()
-        self.ftpMessageHook(request=request)
+    # def clientToServerRequestHook(self, buffer: Buffer) -> None:
+    #     ## we retrieve a request from the buffer
+    #     request, _ = buffer.popFromQueue()
+    #     self.ftpMessageHook(request=request)
 
-    def serverToClientRequestHook(self,  buffer: Buffer) -> None:
-      ## we retrieve a request from the buffer
-        response, _ = buffer.popFromQueue()
-        self.ftpMessageHook(response=response)
+    # def serverToClientRequestHook(self,  buffer: Buffer) -> None:
+    #   ## we retrieve a request from the buffer
+    #     response, _ = buffer.popFromQueue()
+    #     self.ftpMessageHook(response=response)
 
-
-    def ftpMessageHook(self, request: Optional[str] = None, response: Optional[str] = None) -> None:
+    def __call__(self, request: Optional[bytes] = None, response: Optional[bytes] = None) -> bool:
         ## FTP is intended to have an alternating communication
         ## -- We cannot control the adversary
         ## -- But we control our FTP server,
@@ -77,15 +82,15 @@ class FTPProxyInterceptor(StreamInterceptor, metaclass=ABCMeta):
         if not (bool(request) ^ bool(response)):
             raise Exception(f"Cannot only pass a request OR response, not both - request={request}, response={response}")
 
-    def _getResponseCode(self, response: str) -> int:
+    def _getResponseCode(self, response: bytes) -> int:
         ## All reply codes have a length of 3
         ## Reply code xyz
         ## 1 <= x <= 5
         ## 0 <= y <= 5
         ## 0 <= z <= 9 ## not specified on FRC and servers may provide custom replies so we take up the whole range 0-9
         ## NOTE: Multiline replies may do \d\d\d-firstline ... instead of \d\d\d only line (space vs hyphen)
-        ret = re.search("^([1-5][0-5][0-9])[ -]", response)
-        return int(ret.groups()[0])
+        ret = re.search(b"^\d+", response)
+        return int(ret.group(0))
 
     @abstractmethod
     def _createStateGenerator(self) -> Generator:
@@ -113,7 +118,7 @@ class FTPLoginProxyInterceptor(FTPProxyInterceptor):
         ## commands that preceed it
 
         ## NOTE: There is no need for an else statement for each request below
-
+        relayMessage = True
         while True:
             ## Define variables
             username = None
@@ -123,7 +128,7 @@ class FTPLoginProxyInterceptor(FTPProxyInterceptor):
             ## NOTE: The reason why the first step is different from step 2 and 3 is that we need to wait for the USER command
             ## to trigger a command sequence. This is why we check every request to see if it is a USER request which will trigger
             ## the login command sequence
-
+            breakpoint()
             ## 1. First Request (USER)
             request = self._requestQueue.pop()
             response = self._responseQueue.pop()
@@ -131,7 +136,7 @@ class FTPLoginProxyInterceptor(FTPProxyInterceptor):
             messages["USERresponse"] = response
             if self._isUSERRequest(request):
                 completeReq, username = self._parseUSERrequest(request, response, messages)
-                yield
+                yield relayMessage
                 if completeReq is True:
                     continue
             ## otherwise, we didn't get a USER request, so we ignore it, and go back to the top of the while loop
@@ -139,53 +144,57 @@ class FTPLoginProxyInterceptor(FTPProxyInterceptor):
                 yield
                 continue
 
+            breakpoint()
             ## 2. Second Request (PASS)
             request = self._requestQueue.pop()
             response = self._responseQueue.pop()
             messages["PASSrequest"] = request
             messages["PASSresponse"] = response
             completeReq, password = self._parsePASSrequest(request, response, messages, username)
-            yield
+            yield relayMessage
             if completeReq is True:
                 continue
 
+            breakpoint()
             ## 3. Third Request (ACCT)
             request = self._requestQueue.pop()
             response = self._responseQueue.pop()
             messages["ACCTrequest"] = request
             messages["ACCTresponse"] = response
             completeReq, _ = self._parseACCTrequest(request, response, messages, username, password)
-            yield
+            yield relayMessage
 
             ## NOTE: There should be no 3yz reply code (hence to check if completeReq is True)
 
         return None
 
-    def _parseUSERrequest(self, request, response, messages: Dict[str, str]) -> Optional[str]:
-        messages["USERrequest"] = request
-        messages["USERresponse"] = response
+    def _parseUSERrequest(self, request: bytes, response: bytes, messages: Dict[str, bytes]) -> Tuple[bool, Optional[bytes]]:
         responseCode = self._getResponseCode(response)
+        completedLoginSequence = True
+        username = None
+
         if 100 <= responseCode <= 199:
             ## Error
             self._createFTPLoginErrorMessage("ERROR", "USER", (messages["USERrequest"], messages["USERresponse"]))
-            return True, None
+            return completedLoginSequence, username
         elif 200 <= responseCode <= 299:
             ## Success
             ## NOTE: You should not be able to login with just USER command
             username = self._getUsername(request)
             self._createFTPLoginSuccessMessage("USER", username)
             self._executeSuccessHook(username)
-            return True, username
+            return completedLoginSequence, username
         elif 400 <= responseCode <= 599:
             ## Failure
             self._createFTPLoginErrorMessage("FAILURE", "USER", (messages["USERrequest"], messages["USERresponse"]))
-            return True, None
+            return completedLoginSequence, username
         else:
             ## otherwise we got 3yz reply (intermediary positive reply), so we continue with the command sequence
             username = self._getUsername(request)
-            return False, username
+            completedLoginSequence = False
+            return completedLoginSequence, username
 
-    def _parsePASSrequest(self, request, response, messages, username) -> Optional[str]:
+    def _parsePASSrequest(self, request: bytes, response: bytes, messages: Dict[str, bytes], username: str) -> Optional[str]:
         responseCode = self._getResponseCode(response)
         if 100 <= responseCode <= 199:
             ## Error
@@ -208,7 +217,7 @@ class FTPLoginProxyInterceptor(FTPProxyInterceptor):
             password = self._getPassword(request)
             return False, password
 
-    def _parseACCTrequest(self, request, response, messages, username, password) -> Optional[str]:
+    def _parseACCTrequest(self, request: bytes, response: bytes, messages: Dict[str, bytes], username: str, password: str) -> Optional[str]:
         responseCode = self._getResponseCode(response)
         if 100 <= responseCode <= 199 or 300 <= responseCode <= 399:
             ## Error
@@ -236,6 +245,8 @@ class FTPLoginProxyInterceptor(FTPProxyInterceptor):
     def _executeSuccessHook(self, username: Optional[str] = None, password: Optional[str] = None, account: Optional[str] = None) -> None:
         """This will async communicate with the _database class component to check whether the creds are a bait trap"""
         print("Success!!")
+        localVars = locals()
+        logging.critical(f"success: {localVars}")
         raise NotImplementedError()
 
 
@@ -321,56 +332,128 @@ class FTPLoginProxyInterceptor(FTPProxyInterceptor):
 
 
 
-## TODO: This currently only works for IPv4, add functionality for IPv6
-## NOTE: Incredibly important to only enable IPv4 and disable IPv6 for vsftpd.conf
-class _FTPDataConnectionHandler:
-    _dataTransferCommands: FrozenSet[bytes] = frozenset({b"RETR", b"STOR", b"STOU", b"APPEND", b"LIST", b"NLST"})
+class FTPInterceptorHelperMixin:
     _abortCommand: bytes = b"ABOR"
+    _dataTransferCommands: FrozenSet[bytes] = frozenset({b"RETR", b"STOR", b"STOU", b"APPEND", b"LIST", b"NLST"})
 
-    ## NOTE: This only works for vsftpd conf option: port_promiscous (which is NO by default)
-    ## -- port_promiscuous=YES can result in a FTP port bounce attack that allows attackers to footprint using PORT command
-    def _validatePORTArgs(self, expectedClientIP: "str", portCommand: bytes) -> Tuple[Union[Tuple[None,None], Tuple[str, int]]]:
-        """This assumes that the arg"" 'portCommand' starts with PORT but makes no other assumptions"""
-        portArgs = re.search(b"^PORT (\d+),(\d+),(\d+),(\d+),(\d+),(\d+)\r\n", portCommand)
-        unprivilegedPortLowerBound = 1024 ## lowest Port number that FTP allows (inclusive)
-        unprivilegedPortUpperBound = 65535 ## highest Port number that FTP allows (inclusive)
+    ## In C++ implementation, we can pull these out into macros or keep them as inline functions
+    def _octectsToIPByteString(self, octects: Tuple[bytes, bytes, bytes, bytes]) -> bytes:
+        return b".".join(octects)
 
-        if portArgs is None:
-            return None, None
+    def _IPByteStringToFTPByteFormat(self, ip: bytes) -> bytes:
+        return ip.replace(b".", b",")
 
-        ipAddress = ",".join(portArgs.group(0,1,2,3))
+    def _IPFTPByteFormatToByteString(self, ip: bytes) -> bytes:
+        return ip.replace(b",", b".")
+
+    def _portIntToFTPByteFormat(self, port: int) -> bytes:
+        return bytes(str(port // 256), 'utf-8') + b"," + bytes(str(port % 256), 'utf-8')
+
+    def _portFTPByteFormatToInt(self, octects: Tuple[bytes, bytes]) -> int:
+        return 256 * int(octects[0]) + int(octects[1])
+
+    def _validateFTPIPAddress(self, actualClientIPOctects: Tuple[bytes, bytes, bytes, bytes], expectedClientIP: bytes) -> Optional[bytes]:
+        ipAddress = self._octectsToIPByteString(actualClientIPOctects)
         try:
             ## Passing it through ipaddress.ip_address validates the _ipAddress string and raises ValueError if not a valid IPv4 or IPv6
-            ipaddress.ip_address(ipAddress)
+            ipaddress.ip_address(ipAddress.decode('utf-8'))
             
             ## NOTE: This stops FTP port bouncing attack
             ## TODO: We need to replace this by dynamically reading from a config file on program startup before deciding to do this.
             if expectedClientIP != ipAddress:
-                return None, None
+                ipAddress = None
+                return ipAddress
 
         except ValueError:
-            return None, None
+            ipAddress = None
+            return ipAddress
+        
+        return ipAddress
 
-        ## Each port arg cannot exceed 256 (and cannot be negative)
-        if not (0 <= portArgs.group(4) < 256) or not(0 <= portArgs.group(5) < 256):
-            return None, None
+    def _validateFTPPort(self, portOctects: Tuple[bytes, bytes]) -> bytes:
+        port = None
+        unprivilegedPortLowerBound = 1024 ## lowest Port number that FTP allows (inclusive)
+        unprivilegedPortUpperBound = 65535 ## highest Port number that FTP allows (inclusive)
 
-        port = 256 * int(portArgs.group(4)) + int(portArgs.group(5))
+        ## NOTE: We now validate the portArgs
+        portOctectOne = int(portOctects[0])
+        portOctectTwo = int(portOctects[1])
+
+        ## Each port arg cannot exceed 255 (and cannot be negative)
+        if not (0 <= portOctectOne < 256) or not(0 <= portOctectTwo < 256):
+            return port
+
+        port = 256 * portOctectOne + portOctectTwo
 
         ## We exclude privileged port from valid port ranges
         if not(unprivilegedPortLowerBound <= port <= unprivilegedPortUpperBound):
-            return None, None
+            port = None
+            return port
+
+        return port
+
+
+    def _setupEphemeralServerSocket(self, HOST: str, blocking: bool = False) -> socket.socket:
+        s = socket.socket()
+        s.setblocking(blocking)
+        s.bind((HOST, 0)) ## binds to any available port on self.HOST
+        s.listen()
+        return s
+
+    def _createEphemeralClientSocket(self, blocking: bool = False) -> socket.socket:
+        s = socket.socket()
+        s.setblocking(blocking)
+        return s
+
+
+## TODO: This currently only works for IPv4, add functionality for IPv6
+## NOTE: Incredibly important to only enable IPv4 and disable IPv6 for vsftpd.conf
+class FTPDataConnectionHandler(StreamInterceptor.SharedHook, FTPInterceptorHelperMixin):
+    clientToServerCallbackArgument: str = "req"
+    serverToClientCallbackArgument: str = "resp"
+    
+    def __init__(self, *args, **kwargs):
+        self._connectionHandlerGen = self._connectionHandler(*args, **kwargs)
+        next(self._connectionHandlerGen)
+        super().__init__(*args, **kwargs)
+
+    def __call__(self, req=None, resp=None) -> Tuple[bytes, bool]:
+        return self._connectionHandlerGen.send((req, resp,)) ## Generators only accept a single value (therefore we provide a tuple instead of multiple args)
+
+
+    ## NOTE: This only works for vsftpd conf option: port_promiscous (which is NO by default)
+    ## -- port_promiscuous=YES can result in a FTP port bounce attack that allows attackers to footprint using PORT command
+    def _validatePORTArgs(self, expectedClientIP: bytes, portCommand: bytes) -> Tuple[Union[Tuple[None,None], Tuple[str, int]]]:
+        """This assumes that the arg"" 'portCommand' starts with PORT but makes no other assumptions"""
+        rePortCommand = re.search(b"^PORT (\d+),(\d+),(\d+),(\d+),(\d+),(\d+)\r\n", portCommand)
+        ipAddress = None
+        port = None
+
+        ## This checks if the syntax of the PORT command is malformed
+        if rePortCommand is None:
+            return ipAddress, port
+
+        ipAddress = self._validateFTPIPAddress(rePortCommand.groups()[0:4], expectedClientIP)
+        if ipAddress is None:
+            return ipAddress, port
+
+        port = self._validateFTPPort(rePortCommand.groups()[4:6])
+        if port is None:
+            ipAddress = None
+            return ipAddress, port
 
         return ipAddress, port
 
     def _validatePASVargs(self, pasvResponse: bytes) -> Union[Tuple[str, int], Tuple[str, int]]:
+        ipAddress, port = None, None
         portArgs = re.search(b"^227 (\d+),(\d+),(\d+),(\d+),(\d+),(\d+)\r\n", pasvResponse)
         if portArgs is None:
-            return None, None
+            return ipAddress, port
 
-        ## NOTE: We do not validate the server's pasv IP address or port (TODO)
-        ipAddress = ",".join(portArgs.group(0,1,2,3))
-        port = 256 * int(portArgs.group(4)) + int(portArgs.group(5))
+        ## NOTE: We do not validate the server's pasv IP address or port 
+        ## TODO: For BeeLurer we do not need to validate the target server (as we control it), but this may not be the case in other places
+        ipAddress = self._octectsToIPByteString(portArgs.group(1,2,3,4))
+        port = self._portFTPByteFormatToInt(portArgs.group(5,6))
         return ipAddress, port
 
     def _updateDataConnectionInfo(self, currentDataConnectionInfo: Dict[str, Any], dataConnType: DataConnType, clientIP: str, clientPort: int, clientToProxyIP: str,
@@ -386,7 +469,7 @@ class _FTPDataConnectionHandler:
         currentDataConnectionInfo["serverPort"] = serverPort
 
 
-    def _finalizePASVDataConnection(self, message: bytes, serverIP: str, serverPort: int, pasvClientToProxyEphemeralSock: socket.socket) -> Generator[Tuple[bytes, bool], Union[Tuple[bytes,bool], Tuple[bool,bytes]],  Tuple[bytes, Optional[Tuple[socket.socket, socket.socket]], bool, bool]]:
+    def _finalizePASVDataConnection(self, message: bytes, serverIP: bytes, serverPort: int, pasvClientToProxyEphemeralSock: socket.socket) -> Generator[Tuple[bytes, bool], Union[Tuple[bytes,bool], Tuple[bool,bytes]],  Tuple[bytes, Optional[Tuple[socket.socket, socket.socket]], bool, bool]]:
         pasvSockets = None
         relayMessage = True
         passedProcessing = False
@@ -449,7 +532,8 @@ class _FTPDataConnectionHandler:
                 
 
     def _handlePASVResponse(self, resp: bytes, ftpProxyServer: "FTPProxyServer",  controlProxyTunnel: ProxyTunnel, 
-                                  currentDataConnectionInfo: Dict[str, Any], serverIP: str, serverPort: int) -> Tuple[bytes, bool]:
+                                  currentDataConnectionInfo: Dict[str, Any]) -> Tuple[bytes, bool]:
+
         modifiedMessage, serverAddress, passedProcessing, relayMessage = self._validatePASVResponse(resp)
         if passedProcessing is False:
             message = modifiedMessage
@@ -458,11 +542,10 @@ class _FTPDataConnectionHandler:
 
         serverIP, serverPort = serverAddress
         proxyPasvResponse, (clientToProxyIP, clientToProxyPort), pasvClientToProxyEphemeralSock = self._setupPASVResponseToClient(ftpProxyServer.HOST)
-        modifiedMessage, pasvSockets, passedProcessing, relayMessage = self._finalizePASVDataConnection(proxyPasvResponse, serverIP, serverPort, pasvClientToProxyEphemeralSock)
+        modifiedMessage, pasvSockets, passedProcessing, relayMessage = yield from self._finalizePASVDataConnection(proxyPasvResponse, serverIP, serverPort, pasvClientToProxyEphemeralSock)
         if passedProcessing is False:
             message = modifiedMessage
             return message, relayMessage
-
 
         pasvClientToProxySock, pasvProxyToServerSock = pasvSockets
         proxyToServerIP, proxyToServerPort = pasvProxyToServerSock.getsockname()
@@ -470,15 +553,13 @@ class _FTPDataConnectionHandler:
         ## We create a tunnel with registers these sockets with the server's selector
         ftpProxyServer.dataProxyConnections.createTunnel(pasvClientToProxySock, pasvProxyToServerSock, "DataConnection")
         ## We now update information on the new data connection created
-        self._updateDataConnectionInfo(currentDataConnectionInfo, "ACTIVE", 
+        self._updateDataConnectionInfo(currentDataConnectionInfo, "PASSIVE",
                                        clientIP, clientPort, clientToProxyIP, clientToProxyPort,
                                        proxyToServerIP, proxyToServerPort, serverIP, serverPort)
-
 
         modifiedMessage = message
         relayMessage = True
         return message, relayMessage
-
 
 
     def _setupPASVResponseToClient(self, HOST: str) -> Tuple[bytes, Tuple[str, int], socket.socket]:
@@ -495,7 +576,7 @@ class _FTPDataConnectionHandler:
         clientToProxyIP, clientToProxyPort = pasvClientToProxySock.getsockname()
 
         ## We send a PASV response that replaces the one we received from the server
-        pasvResponse = bytes("227 " + ",".join(clientToProxyIP) + "," + str(clientToProxyPort // 256) + "," + str(clientToProxyPort % 256))
+        pasvResponse = b"227 " + self._IPByteStringToFTPByteFormat(bytes(clientToProxyIP, 'utf-8')) + b"," + self._portIntToFTPByteFormat(clientToProxyPort) + b"\r\n"
         return pasvResponse, (clientToProxyIP, clientToProxyPort), pasvClientToProxySock
 
 
@@ -522,7 +603,8 @@ class _FTPDataConnectionHandler:
 
 
 
-    def _finalizePORTDataConnection(self, message: bytes) -> Tuple[bytes, bool, bool]:
+    def _finalizePORTDataConnection(self, message: bytes, activeEphemeralProxyToServerSock: socket.socket) -> Tuple[bytes, bool, bool]:
+        activeProxyToServerSock = None
         relayMessage = True
         while True:
             ## On the first while loop iterator, we yield the modified proxy PORT request to the server
@@ -555,13 +637,18 @@ class _FTPDataConnectionHandler:
                 continue
 
 
+        ## NOTE We have succesfully setup a ACTIVE connection!
+        activeProxyToServerSock = activeEphemeralProxyToServerSock.accept()[0]
+        activeEphemeralProxyToServerSock.close()
+
         ## NOTE: We do not yield this message because we do this at the end of the _processPORTInitiation method
         passedProcessing = True
         relayMessage = True
-        return message, passedProcessing, relayMessage
+        message = b"" ## The first lines of this function have already yielded a modified request which is sent to the server (we do not want to duplicate this request, therefore we set message=b'')
+        return message, activeProxyToServerSock, passedProcessing, relayMessage
 
 
-    def _setupPORTRequestToServer(self, HOST: str,) -> Tuple[bytes, Tuple[str, int], socket.socket]:
+    def _setupPORTRequestToServer(self, HOST: str) -> Tuple[bytes, Tuple[str, int], socket.socket]:
         """ This function performs the following:
             1) Sets up a listener to be connected by a FTP PORT data connection from the server
             2) Creates a PORT message using the listeners details
@@ -575,16 +662,18 @@ class _FTPDataConnectionHandler:
         ## TODO: We need to be able to specify the intnerface for the ephemeral server socket.
         activeProxyToServerSock = self._setupEphemeralServerSocket(HOST)
         serverSockIP, serverSockPort = activeProxyToServerSock.getsockname()
-        portCommand = bytes("PORT " + ",".join(serverSockIP) + ","  + str(serverSockPort // 256) + "," + str(serverSockPort % 256) + "\r\n")
+        portCommand = b"PORT " + self._IPByteStringToFTPByteFormat(bytes(serverSockIP, 'utf-8')) + b"," + self._portIntToFTPByteFormat(serverSockPort) + b"\r\n"
         # controlProxyTunnel.proxyToServerBuffer.write(portCommand)
-        return portCommand, (serverSockIP, serverSockPort), activeProxyToServerSock
+        return portCommand, (bytes(serverSockIP, 'utf-8'), serverSockPort), activeProxyToServerSock
 
-
+    ## TODO: Change return annotation to reflect generator
+    ## NOTE: This is a generator because it yields from self._finalizePORTDataConnection() therefore we use yields instead of return
+    ## NOTE: HOWEVER, every instance of this geerator is only expected to have its __next__() method called only one, (effectively making the yields akin to return)
     def _handlePORTRequest(self, req: bytes,
                                  ftpProxyServer: "FTPProxyServer",
                                  controlProxyTunnel: ProxyTunnel,
                                  currentDataConnectionInfo: Dict,
-                                 serverIP: str, serverPort: int) -> Tuple[bytes, bool]:
+                                 serverIP: bytes, serverPort: int) -> Tuple[bytes, bool]:
 
         ## We check if the proxy received a valid port request and we extract the clientAddress = (clientIP, clientPort)
         modifiedRequest, clientAddress, passedProcessing, relayMessage = self._validatePORTRequest(req, controlProxyTunnel)
@@ -594,35 +683,30 @@ class _FTPDataConnectionHandler:
 
         ## Assuming, the proxy received a valid port request, we setup a connection to the client via the PORT args and return this socket - activeClientToProxySock
         clientIP, clientPort = clientAddress
-        modifiedRequest, activeClientToProxySock, passedProcessing, relayMessage = self._initiatePORTconnectionToClient(clientIP, clientPort, controlProxyTunnel)
+        modifiedRequest, activeClientToProxySock, passedProcessing, relayMessage = yield from self._initiatePORTconnectionToClient(req, clientIP, clientPort, controlProxyTunnel)
         if passedProcessing is False:
             message = modifiedRequest
             return message, relayMessage
 
         ## We store endpoint address information for later
         clientToProxyIP, clientToProxyPort = activeClientToProxySock.getsockname()
-        ## Setup a listener and send a port connection to the server
-        proxyPortCommand, (proxyToServerIP, proxyToServerPort), activeProxyToServerSock = self._setupPORTRequestToServer(ftpProxyServer.HOST)
-        ## We have sent the command to the server, so now we want to wait on the reply of the server
+        ## Setup a listener and craft a port message to be sent to the server in the self._finalizePORTDataConnection() method call
+        proxyPortCommand, (proxyToServerIP, proxyToServerPort), activeEphemeralProxyToServerSock = self._setupPORTRequestToServer(ftpProxyServer.HOST)
         message = proxyPortCommand
 
         ## On the first iteration of the while loop, we yield the modified proxyPortCommand that will then be sent to the server
         ## We then will then keep on receivng processing requests/responses and will process them until:
         ##  1) we receive a valid response code
-        ##  2) we receive another active data connection request (we do not process it until we have relay it to server until we recieve the expected PORT response from the server)
-        modifiedRequest, passedProcessing, relayMessage = yield from self._finalizePORTDataConnection(message)
+        ##  2) we receive another active data connection request (we do not process it or relay it to the server until we recieve the expected PORT response from the server)
+        modifiedRequest, activeProxyToServerSock, passedProcessing, relayMessage = yield from self._finalizePORTDataConnection(message, activeEphemeralProxyToServerSock)
         if passedProcessing is False:
             message = modifiedRequest
             return message, relayMessage
 
-        ## NOTE We have succesfully setup a ACTIVE connection!
-
         ## We create a tunnel which registers these sockets with the server's selector
         ftpProxyServer.dataProxyConnections.createTunnel(activeClientToProxySock, activeProxyToServerSock, "DataConnection")
         ## We then update the 'currentDataConnection' information for future needs of the generator
-        self._updateDataConnectionInfo(currentDataConnectionInfo, "ACTIVE",
-                                        clientIP, clientPort, clientToProxyIP, clientToProxyPort,
-                                        proxyToServerIP, proxyToServerPort, serverIP, serverPort)
+        self._updateDataConnectionInfo(currentDataConnectionInfo, "ACTIVE", clientIP, clientPort, clientToProxyIP, clientToProxyPort, proxyToServerIP, proxyToServerPort, serverIP, serverPort)
 
         message = modifiedRequest
         relayMessage = True
@@ -630,81 +714,155 @@ class _FTPDataConnectionHandler:
         
 
 
-    ## BUG: Short-circuiting the server has the potential to violate the FTP ordered message requirement (and could be a dead giveaway!)
+    ## NOTE: Short-circuiting the server has the potential to violate the FTP ordered message requirement (and could be a dead giveaway!)
     def _validatePORTRequest(self, req: bytes, controlProxyTunnel: ProxyTunnel) -> Tuple[Optional[bytes], Optional[Tuple[bytes, int]], bool, bool]:
         clientAddress = None
         passedProcessing = False
         relayMessage = True
+        message = req
 
         ## We start by checking if the port command was issued
         requestCommand = re.search(b"^\w+", req)
 
         ## If the request is completely malformed, or it is not a PORT command, we relay it to the server
         if requestCommand is None or requestCommand.group(0) != b"PORT":
-            message = req
             return message, clientAddress, passedProcessing, relayMessage
 
         ## We then validate and extract endpoint args from the PORT commandv
         ## BUG: Short circuiting may be a dead give-away of a non-transparent proxy if the session's command history are
         ## accessible by the user (and we don't modify the command history to reflect this short-circuit)
-        expectedClientIP = controlProxyTunnel.clientToServerSock.getpeername()[0]
+        expectedClientIP = bytes(controlProxyTunnel.clientToProxySocket.getpeername()[0], 'utf-8')
         clientIP, clientPort = self._validatePORTArgs(expectedClientIP, req)
         if clientIP is None:
             ## This was an invalid PORT command, so we short circuit the server and so we don't send anything to it i.e. ""
             ## and we reply directly to the client by sending the
-            controlProxyTunnel.serverToClientBuffer.write(b"500 Illegal PORT command.\r\n")
-            message = b""
+            controlProxyTunnel.serverToClientBuffer.writeOnly(b"500 Illegal PORT command.\r\n")
             ## We then restart to the top of the while loop
             return message, clientAddress, passedProcessing, relayMessage
 
-        message = None
         passedProcessing = True
         relayMessage = True
         clientAddress = (clientIP, clientPort)
         return message, clientAddress, passedProcessing, relayMessage
 
 
-    ## BUG: Short-circuiting the server has the potential to violate the FTP ordered message requirement (and could be a dead giveaway!)
-    def _initiatePORTconnectionToClient(self, clientIP: str, clientPort: int, controlProxyTunnel: ProxyTunnel) -> Tuple[Optional[bytes], Optional[socket.socket], bool, bool]:
+    def _waitUntilNextReq(self, message: bytes):
+        relayMessage = False
+        while True:
+            _req, _resp = yield message, relayMessage
+            if _req is not None:
+                break
+            message = _resp
+        return _resp
+
+    def _waitUntilNextResp(self, message: bytes):
+        relayMessage = False
+        while True:
+            _req, _resp = yield message, relayMessage
+            if _resp is not None:
+                break
+            message = _req
+        return _req
+
+    ## NOTE: Short-circuiting the server has the potential to violate the FTP ordered message requirement (and could be a dead giveaway!)
+    ## NOTE: ASSUMPTION: The generator should only be receiving an option of (the PORT request, any sequence of responses)
+    def _initiatePORTconnectionToClient(self, req: bytes, clientIP: bytes, clientPort: int, controlProxyTunnel: ProxyTunnel) -> Tuple[Optional[bytes], Optional[socket.socket], bool, bool]:
         ## Assuming valid PORT command, we 1) connect to the client, 2) we setup an ACTIVE port locally, 3) we send our own PORT command to the client
         ## TODO: The client could be an adversary so we need to make sure that this is not blocking
+        message = None
         relayMessage = True
         passedProcessing = False
         activeClientToProxySock = None
 
-        try:
-            activeClientToProxySock = self._createEphemeralClientSocket()
-            activeClientToProxySock.connect(clientIP, clientPort)
-        except BlockingIOError:
-            ## NOTE: THe RFC says PORT should send a 421 reply, but vsftpd sends a 425 instead
-            controlProxyTunnel.serverToClientBuffer.write(b"425 Failed to establish connection.\r\n")
-            ## We then restart to the top of the while loop
-            message = b""
-            ## NOTE: Technically we are 'relaying an empty message' which means the buffer won't actualy send anything
-            relayMessage = True
-            return message, activeClientToProxySock, passedProcessing, relayMessage
+        ## NOTE: We need to rewrite this method to yield everytime we fail and set it to non-blocking ()
+        activeClientToProxySock = self._createEphemeralClientSocket()
+        
+        ## TODO: Consider adding a timeout for EWOULDBLOCK/EAGAIN
+        while True:
+            try:
+                activeClientToProxySock.connect((clientIP, clientPort))
+            except socket.error as e:
+                ## If the connection was refused:
+                if e.errno == errno.ECONNREFUSED:
+                    ## NOTE: THe RFC says PORT should send a 421 reply, but vsftpd sends a 425 instead
+                    controlProxyTunnel.serverToClientBuffer.writeOnly(b"425 Failed to establish connection.\r\n")
+                    ## We then restart to the top of the while loop
+                    message = b""
+                    ## NOTE: Technically we are 'relaying an empty message' which means the buffer won't actualy send anything
+                    relayMessage = True
+                    return message, activeClientToProxySock, passedProcessing, relayMessage
+                
+                ## If the connection operation would block or socket resource is temporarily unavailable:
+                elif e.errno in (errno.EWOULDBLOCK, errno.EAGAIN):
+                    ## We yield the current message
+                    relayMessage = False
+                    ## We wait for the next call with request (which should be an indentical request string).
+                    yield from self._waitUntilNextReq(message)
+                    continue
 
-        message = None
+                ## Otherwise if the connection operation is in progress (but cannot be completed imeediately)
+                elif e.errno == errno.EINPROGRESS:
+                    ##
+                    relayMessage = False
+                    while True:
+                        errorValue = activeClientToProxySock.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
+                        if errorValue == 0:
+                            ## A value of 0 means that there is no error currently present
+                            ## => Therefore, we can continue with using the socket
+                            break
+                        elif errorValue == errno.EINPROGRESS:
+                            yield from self._waitUntilNextReq(message)
+                            continue
+                        else:
+                            ## If we did not receive a ECONNREFUSED here, then it is unexpected
+                            ## TODO: Therefore, we should log the error in this case, and then follow the same behavior as if the connection was refused
+                            if errorValue != errno.ECONNREFUSED:
+                                raise NotImplementedError()
+
+                            message = req
+                            relayMessage = True
+                            passedProcessing = False
+                            activeClientToProxySock.close()
+                            return message, activeClientToProxySock, passedProcessing, relayMessage
+                    ## We break out of the while true
+                    break
+                
+                ## otherwise, there is another error that we have not anticipated
+                else:
+                    ## we log the error
+                    ## and we raise an exception (this exception should be caught and result in the tunnel
+                    message = req
+                    relayMessage = True
+                    passedProcessing = False
+                    activeClientToProxySock = None
+                    return message, activeClientToProxySock, passedProcessing, relayMessage
+
+        message = req
+        passedProcessing = True
+        relayMessage = True
         return message, activeClientToProxySock, passedProcessing, relayMessage
 
    
     ## TODO: Ensure any other resources are also cleanedup appropritately (and periodically if need be)
     ## TODO: Remove unnecessary references to ftpProxyServer and stick it into a mixin
     ## This dataConnectionSetup generator is called by ClientToServer (req) and ServerToClient (resp)
-    def ftpDataConnectionHandler(self, ftpProxyServer: "FTPProxyServer", controlProxyTunnel: "ProxyTunnel", buffer: Buffer) -> Generator[Optional[bool], Tuple[Optional[bytes], Optional[bytes]], None]:
+    ## NOTE: Since this is a shared hook, we provide two parameters for buffers (clientToServerBuffer, server...) instead of a single buffer parameter
+    def _connectionHandler(self, server: "FTPProxyServer", proxyTunnel: "ProxyTunnel", clientToServerBuffer: Optional[Buffer] = None, serverToClientBuffer: Optional[Buffer] = None) -> Generator[Optional[bool], Tuple[Optional[bytes], Optional[bytes]], None]:
         """
         This is a generator that handles data connection creation, maintainance, and teardown for a client proxy session.
         This should be set as a hook on each tunnel that corresponds to a FTP control connection
         This generator is called using the arguments (req, resp) which are complete delimited FTP requests and responses respectively
         This generator responds with a boolean that tells the tunnel that invoked this handler to either pass on the message (i.e. requests, )
         """
-
+        ftpProxyServer = server
+        controlProxyTunnel = proxyTunnel
+        
         ## NOTE: Here we store data about the current data connection (if it exists)
         ## In case the user is able to query about the FTP server status / data connection, this should help when modifying the response.
         currentDataConnectionInfo = {}
-        serverIP, serverPort = controlProxyTunnel.proxyToServerSock.getpeername()
+        serverIP, serverPort = controlProxyTunnel.proxyToServerSocket.getpeername()
 
-        message = None
+        message = b""
         relayMessage = True
         
         while True:
@@ -714,48 +872,37 @@ class _FTPDataConnectionHandler:
             if req is not None:
                 ## We execute _handlePORTRequest which will validate if the request is a valid PORT request and setup a PORT proxy connection
                 ## It will then return the request that should be relayed to the server, and whether it should be sent at this moment
-                message, relayMessage = self._handlePORTRequest(req, ftpProxyServer, controlProxyTunnel, currentDataConnectionInfo, serverIP, serverPort)
+                message, relayMessage = yield from self._handlePORTRequest(req, ftpProxyServer, controlProxyTunnel, currentDataConnectionInfo, serverIP, serverPort)
+                # message, relayMessage = next(requestHandlerGenerator)
                 continue
                 
             ## If we have received a response:
             if resp is not None:
                 ## We execute _handlePASVResponse which will validate if the response is a valid PASV response and will setup a PASV proxy connection
                 ## It will then return the response that should be relayed to the client, and whether it should be sent at this moment
-                message, relayMessage = self._handlePASVResponse(resp, ftpProxyServer, controlProxyTunnel, currentDataConnectionInfo, serverIP, serverPort)
+                message, relayMessage = yield from self._handlePASVResponse(resp, ftpProxyServer, controlProxyTunnel, currentDataConnectionInfo)
+                # message, relayMessage = next(responseHandlerGenerator)
                 continue
         
         return None
         
 
-    def _setupEphemeralServerSocket(self, HOST: str) -> socket.socket:
-        s = socket.socket()
-        s.setblocking(False)
-        s.bind((HOST, 0)) ## binds to any available port on self.HOST
-        s.listen()
-        return s
-
-    def _createEphemeralClientSocket(self) -> socket.socket:
-        s = socket.socket()
-        s.setblocking(False)
-        return s
 
 
 
 ## We set a non-transparent proxy hook for each control connection to create and register a data connection
-class FTPDataConnectionHandler(StreamInterceptor):
-    class SharedHook(StreamInterceptor.Hook, _FTPDataConnectionHandler):
-        def __init__(self, *args, **kwargs) -> None:
-            super().__init__(*args, **kwargs)
+# class FTPDataConnectionHandler(StreamInterceptor):
+#     class SharedHook(StreamInterceptor.Hook, _FTPDataConnectionHandler):
+#         def __init__(self, *args, **kwargs) -> None:
+#             super().__init__(*args, **kwargs)
+#             self._connectionH
 
-        def _executeSharedHook(self, *args, **kwargs):
-            return self.ftpDataConnectionHandler(*args, **kwargs)
+#         def _executeSharedHook(self, *args, **kwargs):
+#             return self.ftpDataConnectionHandler(*args, **kwargs)
         
-        def __call__(self, *args, **kwargs):
-            self._executeSharedHook(*args, **kwargs)
+#         def __call__(self, *args, **kwargs):
+#             self._executeSharedHook(*args, **kwargs)
 
-    class ClientToServerHook(FTPDataConnectionHandler.SharedHook): ...
-
-    class ServerToClientHook(FTPDataConnectionHandler.SharedHook): ...
 
 ## NOTES ----------------------------------------------------------------------------------------------
 
