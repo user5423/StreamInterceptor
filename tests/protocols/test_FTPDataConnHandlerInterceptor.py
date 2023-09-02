@@ -1,20 +1,22 @@
 import collections
 import typing
+import time
 import pytest
-
 # from ftp_proxyinterceptor import FTPProxyInterceptor
+import threading
 import inspect
 import os
 import sys
 import socket
 import pprint
-from typing import Tuple, Generator, List
+from typing import Tuple, Generator, List, Optional
 sys.path.insert(0, os.path.join("src"))
 sys.path.insert(0, os.path.join("..", "src"))
 sys.path.insert(0, os.path.join("..", "..", "src"))
 sys.path.insert(0, os.path.join("tests", "testhelper"))
 # sys.path.insert(0, os.path.join("..", "tests", "testhelper"))
 from ftp_proxyinterceptor import FTPProxyInterceptor, FTPInterceptorHelperMixin, FTPLoginProxyInterceptor, FTPDataConnectionHandler
+from tcp_proxyserver import TCPProxyServer, ProxyTunnel
 from DataTransferSimulator import TelnetClientSimulator
 
 
@@ -261,12 +263,289 @@ class Test_FTPInterceptorHelperMixin:
 
 
 
+@pytest.fixture
+def setupMockDataConnHandler():
+    ## NOTE: This function returns a FTPDataConnectionHandler that has an empty _connectionHandler that is used as an entrypoint via a proxy __call__() method
+    ## NOTE: There is an expectation that _connectionHandler() will not be called using this Mock class
+    class MockFTPDataConnectionHandler(FTPDataConnectionHandler):
+        def _connectionHandler(self, *args, **kwargs):
+            while True:
+                yield
+
+    HOST, PORT = "127.0.0.1", 8080 ## NOTE: This socket will not be queried!!!
+    PROXY_HOST, PROXY_PORT = "127.0.0.1", 22 ## NOTE: This destination will not be connected to!!!
+
+    proxyServer = TCPProxyServer(HOST, PORT, PROXY_HOST, PROXY_PORT)
+    proxyTunnel = ProxyTunnel(socket.socket(), socket.socket(), []) ## ProxyTunnel(clientToProxySock, ProxyToClientSock, StreamInterceptorRegistration)
+    clientToServerBuffer = proxyTunnel.clientToServerBuffer
+    serverToClientBuffer = proxyTunnel.serverToClientBuffer
+    mockDataConnHandler = MockFTPDataConnectionHandler(proxyServer, proxyTunnel, clientToServerBuffer, serverToClientBuffer)
+    yield proxyServer, proxyTunnel, mockDataConnHandler
+    
+    proxyServer.serverSocket.close()
+    return None
+
+
+@pytest.fixture
+def setupLocalListener():
+    ip = b"127.0.0.1"
+    sock = socket.socket()
+    sock.bind((ip, 0))
+    sock.listen()
+    port = sock.getsockname()[1]
+    yield ip, port, sock
+
+    sock.close()
+
+@pytest.fixture
+def setupPORTRequestForServer(setupLocalListener, setupMockDataConnHandler):
+    proxyIP, proxyPort, proxySock = setupLocalListener
+    proxyServer, proxyTunnel, mockDataConnHandler = setupMockDataConnHandler
+    portCommand = b"PORT " + mockDataConnHandler._IPByteStringToFTPByteFormat(proxyIP) + b"," + mockDataConnHandler._portIntToFTPByteFormat(proxyPort) + b"\r\n"
+    yield proxyIP, proxyPort, proxySock, portCommand
+
+
+## NOTE: This is used as an empty class to dump arbitrary and store it in attribute names
+class OutputStorage: ...
+
+
+def stepThroughGenerator(generatorFunction, stepCallback, messages, timeout, generatorFunctionArgs=(), generatorFunctionKwargs={}):
+    index = 0
+    messages = [None] + messages
+    startTime = time.time()
+    generatorCompletedExecution = False
+    subgen = generatorFunction(*generatorFunctionArgs, **generatorFunctionKwargs)
+    while time.time() < startTime + timeout:
+        try:
+            output = subgen.send(messages[index])
+            stepCallback(*output)
+            index+=1
+        except StopIteration as e:
+            generatorCompletedExecution = True
+            break
+
+    return generatorCompletedExecution
+
+
 
 class Test_FTPDataConnInterceptor_Helpers:
     ## Here we are testing the data conn interceptor which should handle correctly setting up 
-    ...
 
-class Test_FTPDataConnInterceptor_E2E:
+    ## NOTE: ASSUMPTION - Only single delimited messages that have a single delimiter and end with it (CRLF)
+    ## NOTE: ASSUMPTION - Only request messages are passed to this method
+    ## NOTE: BEHAVIOR - There should not be any short-cutting
+    def _assertValidatePortRequestSuccess(self, message: bytes, clientAddress: Optional[Tuple[bytes, int]], passedProcessing: bool, relayMessage: bool, req: bytes, validIPv4: bytes, validPort: int) -> None:
+        assert relayMessage is True
+        assert clientAddress == (validIPv4, validPort)
+        assert passedProcessing is True
+        assert message == req
+
+    def _assertValidatePortRequestFailure(self, message: bytes, clientAddress: Optional[Tuple[bytes, int]], passedProcessing: bool, relayMessage: bool, req: bytes) -> None:
+        assert relayMessage is True
+        assert clientAddress is None
+        assert passedProcessing is False
+        assert message == req
+
+    def _setupClientConnection(self, proxyTunnel: ProxyTunnel) -> socket.socket:
+        proxyTunnel.clientToProxySocket.listen()
+        clientSocket = socket.socket()
+        clientSocket.connect(proxyTunnel.clientToProxySocket.getsockname())
+        proxyTunnel.clientToProxySocket = proxyTunnel.clientToProxySocket.accept()[0]
+        return clientSocket
+
+    def test_validatePORTRequest_validNonPORTRequest(self, setupMockDataConnHandler):
+        ## TODO: Expand this test to execute all request non-PORT request types
+        proxyServer, proxyTunnel, mockDataConnHandler = setupMockDataConnHandler
+        req = b"USER user5423\r\n"
+        
+        message, clientAddress, passedProcessing, relayMessage = mockDataConnHandler._validatePORTRequest(req, proxyTunnel)
+        self._assertValidatePortRequestFailure(message, clientAddress, passedProcessing, relayMessage, req)
+
+    def test_validatePORTRequest_PORTCommand_NoAddressArgs(self, setupMockDataConnHandler):
+        proxyServer, proxyTunnel, mockDataConnHandler = setupMockDataConnHandler
+
+        req = b"PORT \r\n"
+        clientSocket = self._setupClientConnection(proxyTunnel)
+        message, clientAddress, passedProcessing, relayMessage = mockDataConnHandler._validatePORTRequest(req, proxyTunnel)
+        self._assertValidatePortRequestFailure(message, clientAddress, passedProcessing, relayMessage, req)
+
+    def test_validatePORTRequest_PORTCommand_InvalidIPv4Address_InvalidPriviledgedPort(self, setupMockDataConnHandler):
+        proxyServer, proxyTunnel, mockDataConnHandler = setupMockDataConnHandler
+        ## ip=127,0,0,x port=0,x (where x is missing octect)
+        req = b"PORT 127,0,0,0\r\n"
+        clientSocket = self._setupClientConnection(proxyTunnel)
+        message, clientAddress, passedProcessing, relayMessage = mockDataConnHandler._validatePORTRequest(req, proxyTunnel)
+        self._assertValidatePortRequestFailure(message, clientAddress, passedProcessing, relayMessage, req)
+
+    def test_validatePORTRequest_PORTCommand_validIPv4Address_InvalidPriviledgedPort(self, setupMockDataConnHandler):
+        proxyServer, proxyTunnel, mockDataConnHandler = setupMockDataConnHandler
+        ## ip=127,0,0,1 port=0,x (where x is missing octect)
+        req = b"PORT 127,0,0,1,0\r\n"
+        clientSocket = self._setupClientConnection(proxyTunnel)
+        message, clientAddress, passedProcessing, relayMessage = mockDataConnHandler._validatePORTRequest(req, proxyTunnel)
+        self._assertValidatePortRequestFailure(message, clientAddress, passedProcessing, relayMessage, req)
+
+    def test_validatePORTRequest_PORTCommand_InvalidIPv4Address_ValidPriviledgedPort(self, setupMockDataConnHandler):
+        ## This test is effectively the same as test_validatePORTRequest_PORTCommand_validIPv4Address_InvalidPriviledgedPort (but we consider it from a different perspective)
+        proxyServer, proxyTunnel, mockDataConnHandler = setupMockDataConnHandler
+        ## ip=127,0,0,x port=1,0 (where x is missing octect)
+        req = b"PORT 127,0,0,1,0\r\n"
+        clientSocket = self._setupClientConnection(proxyTunnel)
+        message, clientAddress, passedProcessing, relayMessage = mockDataConnHandler._validatePORTRequest(req, proxyTunnel)
+        self._assertValidatePortRequestFailure(message, clientAddress, passedProcessing, relayMessage, req)
+
+    def test_validatePORTRequest_PORTCommand_ValidIPv4Address_ValidPriviledgedPort(self, setupMockDataConnHandler):
+        proxyServer, proxyTunnel, mockDataConnHandler = setupMockDataConnHandler
+        req = b"PORT 127,0,0,1,4,4\r\n"
+        validIPv4 = b"127.0.0.1"
+        validPort = 256*4 + 4
+        clientSocket = self._setupClientConnection(proxyTunnel)
+        message, clientAddress, passedProcessing, relayMessage = mockDataConnHandler._validatePORTRequest(req, proxyTunnel)
+        self._assertValidatePortRequestSuccess(message, clientAddress, passedProcessing, relayMessage, req, validIPv4, validPort)
+
+
+    # def test_validatePORTRequest_PORTCommand_ValidLoopbackIPv4Address_ValidUnpriviledgedPort(self): ...
+    # def test_validatePORTRequest_PORTCommand_ValidLoopbackIPv4Address_InvalidPriviledgedPort(self): ...
+    # def test_validatePORTRequest_PORTCommand_ValidLoopbackIPv4Address_NegativePort(self): ...
+    # def test_validatePORTRequest_PORTCommand_ValidLoopbackIPv4Address_ZeroPort(self): ...
+
+    # def test_validatePORTRequest_PORTCommand_InvalidIPv4Address_ValidUnpriviledgedPort(self): ...
+    # def test_validatePORTRequest_PORTCommand_InvalidIPv4Address_InvalidPriviledgedPort(self): ...
+    # def test_validatePORTRequest_PORTCommand_InvalidIPv4Address_NegativePort(self): ...
+    # def test_validatePORTRequest_PORTCommand_InvalidIPv4Address_ZeroPort(self): ...
+
+
+    ## NOTE: ASSUMPTION - The ipv4 and port values have been validated for these tests
+    ## NOTE: ASSUMPTION - The ipv4 address in the PORT command matches the client's IPv4
+    ## NOTE: ASSUMPTION - The port in the PORT command is an unprivileged port 1024 <= x <= 65535
+    def test_initiatePORTconnectionToClient_availableLoopbackClientIPv4EndpointListening(self, setupMockDataConnHandler, setupLocalListener):
+        proxyServer, controlProxyTunnel, mockDataConnHandler = setupMockDataConnHandler
+        clientIP, clientPort, clientSock = setupLocalListener ## creates a local listener on an unused unpriviledged port
+        req = b"PORT " + mockDataConnHandler._IPByteStringToFTPByteFormat(clientIP) + b"," + mockDataConnHandler._portIntToFTPByteFormat(clientPort) + b"\r\n"
+
+        outputStorageInstance = OutputStorage()
+        args = (req, clientIP, clientPort, controlProxyTunnel)
+        def subgenerator_wrapper(req, clientIP, clientPort, controlProxyTunnel):
+            nonlocal outputStorageInstance, mockDataConnHandler
+            modifiedRequest, activeClientToProxySock, passedProcessing, relayMessage = yield from mockDataConnHandler._initiatePORTconnectionToClient(req, clientIP, clientPort, controlProxyTunnel)
+            outputStorageInstance.results = {"modifiedRequest": modifiedRequest, "activeClientToProxySock": activeClientToProxySock, "passedProcessing": passedProcessing, "relayMessage": relayMessage}
+
+        def stepCallback(message, relayMessage):
+            nonlocal req
+            assert message == req
+            assert relayMessage == False
+
+        maxYieldCount = 10000
+        messages = [None] * maxYieldCount ## A high number of values than will be yielded in the generator
+        generatorCompletedExecution = stepThroughGenerator(subgenerator_wrapper, stepCallback, messages, timeout=1.0, generatorFunctionArgs=args)
+        
+        assert generatorCompletedExecution is True
+        ## NOTE: Remember, our client sock is still a listener in which we need to execute accept() on
+        acceptedClientSock = clientSock.accept()[0]
+        assert outputStorageInstance.results["modifiedRequest"] == req
+        assert outputStorageInstance.results["passedProcessing"] is True
+        assert outputStorageInstance.results["relayMessage"] is True
+        assert outputStorageInstance.results["activeClientToProxySock"].getpeername() == acceptedClientSock.getsockname()
+
+
+    def test_initiatePORTconnectionToClient_availaleLoopbackClientIPv4EndpointNotListening(self, setupMockDataConnHandler,):
+        proxyServer, controlProxyTunnel, mockDataConnHandler = setupMockDataConnHandler
+        clientIP = b"127.0.0.1"
+        clientPort = 2^16-1 ## This is not a special port, but it is unlikely some other program is listening on this
+        req = b"PORT " + mockDataConnHandler._IPByteStringToFTPByteFormat(clientIP) + b"," + mockDataConnHandler._portIntToFTPByteFormat(clientPort) + b"\r\n"
+
+        outputStorageInstance = OutputStorage()
+        args = (req, clientIP, clientPort, controlProxyTunnel)
+        def subgenerator_wrapper(req: bytes, clientIP: bytes, clientPort: int, controlProxyTunnel: ProxyTunnel):
+            nonlocal outputStorageInstance, mockDataConnHandler
+            modifiedRequest, activeClientToProxySock, passedProcessing, relayMessage = yield from mockDataConnHandler._initiatePORTconnectionToClient(req, clientIP, clientPort, controlProxyTunnel)
+            outputStorageInstance.results = {"modifiedRequest": modifiedRequest, "activeClientToProxySock": activeClientToProxySock, "passedProcessing": passedProcessing, "relayMessage": relayMessage}
+
+        def stepCallback(message, relayMessage):
+            nonlocal req
+            assert message == req
+            assert relayMessage == False
+
+        maxYieldCount = 10000
+        messages = [None] * maxYieldCount ## A high number of values than will be yielded in the generator
+        generatorCompletedExecution = stepThroughGenerator(subgenerator_wrapper, stepCallback, messages, timeout=1.0, generatorFunctionArgs=args)
+
+        assert generatorCompletedExecution is True
+        assert outputStorageInstance.results["modifiedRequest"] == req
+        assert outputStorageInstance.results["passedProcessing"] is False
+        assert outputStorageInstance.results["relayMessage"] is True
+        assert outputStorageInstance.results["activeClientToProxySock"].fileno() == -1 ## i.e. the socket is closed
+
+
+    ## NOTE: ASSUMPTION - The server host is controlled by the developer so we assume that the server IPv4 is set correctly
+    ## TODO: We will be developing a quick dry-run functionality to ensure that everything is configured correctly
+    def test_setupPORTRequestToServer_availableLoopbackServerIPv4EndpointListening(self, setupMockDataConnHandler):
+        proxyServer, controlProxyTunnel, mockDataConnHandler = setupMockDataConnHandler
+        HOST = b"127.0.0.1"
+        proxyPortCommand, (proxyToServerIP, proxyToServerPort), activeProxyToServerSock = mockDataConnHandler._setupPORTRequestToServer(HOST)
+
+        assert proxyToServerIP == b"127.0.0.1"
+        assert 1024 <= proxyToServerPort <= 65535
+        assert activeProxyToServerSock.getsockname()[1] != 0 ## assigned a port means the socket is bound BUG: THis is insufficient to say that it is bound, AND subsequently listening!!!!
+        assert proxyPortCommand == b"PORT " + mockDataConnHandler._IPByteStringToFTPByteFormat(proxyToServerIP) + b"," + mockDataConnHandler._portIntToFTPByteFormat(proxyToServerPort) + b"\r\n"
+
+
+    ## NOTE: ASSUMPTION - At this point, our entrypoint to the function is the serverPORT command and the proxy socket listener
+    ## The program should immediately yield the serverPORTcommand so that it can be relayed to the server
+    ## and then the program should wait until it receives a connection. (if it timesout, the the socket should be shut)
+    def test_finalizePORTDataConnection_ServerConnects(self, setupMockDataConnHandler, setupPORTRequestForServer):
+        proxyServer, controlProxyTunnel, mockDataConnHandler = setupMockDataConnHandler
+        proxyIP, proxyPort, proxySockListener, portCommand = setupPORTRequestForServer
+
+        # modifiedRequest, passedProcessing, relayMessage = yield from self._finalizePORTDataConnection(portCommand, ephemeralProxyListener)
+        outputStorageInstance = OutputStorage()
+        args = (portCommand, proxySockListener)
+        def subgenerator_wrapper(portCommand: bytes, proxySockListener: socket.socket):
+            nonlocal outputStorageInstance, mockDataConnHandler
+            modifiedRequest, activeProxyToServerSock, passedProcessing, relayMessage = yield from mockDataConnHandler._finalizePORTDataConnection(portCommand, proxySockListener)
+            outputStorageInstance.results = {"modifiedRequest": modifiedRequest, "activeProxyToServerSock": activeProxyToServerSock, "passedProcessing": passedProcessing, "relayMessage": relayMessage}
+
+        sentMessages = [
+            (None, b"200 Success\r\n"),
+        ]
+
+        def _stepCallbackGenSetup():
+            nonlocal portCommand, sentMessages
+            counter = 0
+            message, relayMessage = yield
+            assert message == portCommand
+            assert relayMessage is True
+            while True:
+                message, relayMessage = yield
+                if sentMessages[counter][0] is not None: ## then it is a request
+                    assert message == sentMessages[counter][1]
+                    assert relayMessage is False
+                else: ## then it is a response
+                    assert message == sentMessages[counter][1]
+                    assert relayMessage is True
+
+        gen = _stepCallbackGenSetup()
+        next(gen)
+        def stepCallback(message, relayMessage):
+            nonlocal gen
+            gen.send((message, relayMessage))
+
+        timeout = 1.0
+        serverSock = socket.socket()
+        def mockServerConnect(proxyIP, proxyPort):
+            serverSock.connect((proxyIP, proxyPort))
+        
+        threading.Timer(timeout/4, mockServerConnect, args=(proxyIP, proxyPort)).start()
+        generatorCompletedExecution = stepThroughGenerator(subgenerator_wrapper, stepCallback, sentMessages, timeout=timeout, generatorFunctionArgs=args)
+
+        assert generatorCompletedExecution is True
+        assert outputStorageInstance.results["modifiedRequest"] == b"" ## We don't want to send the original message (as we have already sent a modified proxyPort message already!)
+        assert outputStorageInstance.results["relayMessage"] is True
+        assert outputStorageInstance.results["passedProcessing"] is True
+        assert outputStorageInstance.results["activeProxyToServerSock"].getpeername() == serverSock.getsockname()  ## i.e. the socket is connected
+
+
+class Test_FTPDataConnInterceptor_Integration:
     ## System Test setup
     ## - We need on the system side:
     ##      - a proxy server
@@ -329,4 +608,8 @@ class Test_FTPDataConnInterceptor_E2E:
     ## - e.g. a pasv and port should cancel out the previous connection
 
     ## - for each sequence of port/pasv/command
+    ...
+
+
+class Test_FTPDataConnInterceptor_E2E:
     ...
