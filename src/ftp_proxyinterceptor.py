@@ -18,10 +18,11 @@ class FTPProxyInterceptor(StreamInterceptor.Hook, metaclass=ABCMeta):
     clientToServerCallbackArgument = "request"
     serverToClientCallbackArgument = "response"
     
-    def __init__(self, server: "FTPProxyServer", buffer: Buffer) -> None:
+    def __init__(self, server: "FTPProxyServer", proxyTunnel: "ProxyTunnel", buffer: Buffer) -> None:
         super().__init__()
         self.server = server
         self.buffer = buffer
+        self.proxyTunnel = proxyTunnel
         ## Here are the requests
         self._requestQueue = collections.deque()
         self._responseQueue = collections.deque()
@@ -128,7 +129,7 @@ class FTPLoginProxyInterceptor(FTPProxyInterceptor):
             ## NOTE: The reason why the first step is different from step 2 and 3 is that we need to wait for the USER command
             ## to trigger a command sequence. This is why we check every request to see if it is a USER request which will trigger
             ## the login command sequence
-            breakpoint()
+            # breakpoint()
             ## 1. First Request (USER)
             request = self._requestQueue.pop()
             response = self._responseQueue.pop()
@@ -144,7 +145,7 @@ class FTPLoginProxyInterceptor(FTPProxyInterceptor):
                 yield
                 continue
 
-            breakpoint()
+            # breakpoint()
             ## 2. Second Request (PASS)
             request = self._requestQueue.pop()
             response = self._responseQueue.pop()
@@ -155,7 +156,7 @@ class FTPLoginProxyInterceptor(FTPProxyInterceptor):
             if completeReq is True:
                 continue
 
-            breakpoint()
+            # breakpoint()
             ## 3. Third Request (ACCT)
             request = self._requestQueue.pop()
             response = self._responseQueue.pop()
@@ -307,7 +308,7 @@ class FTPLoginProxyInterceptor(FTPProxyInterceptor):
         ## implementations that have the same behavior)
 
         ## NOTE: the regex checks if the strings starts with zero or more spaces and then has a USER string succeedeing it
-        if re.search("^USER (\w+)(\r\n|\r)", request):
+        if re.search(b"^USER (\w+)(\r\n|\r)", request):
             return True
         return False
 
@@ -315,7 +316,7 @@ class FTPLoginProxyInterceptor(FTPProxyInterceptor):
     ## NOTE: These methods will only be executed assuming that the request received a positive 3xx response
     ## --> This means input validation on the request isn't neccessary
     def _getUsername(self, request: str) -> str:
-        ret = re.search("^USER (\w+)(\r\n|\r)", request)
+        ret = re.search(b"^USER (\w+)(\r\n|\r)", request)
         return ret.groups()[0]
         ## The User request should be delimited with either \r\n or \r at the END of the request, so we strip that on the end (i.e. right of str)
         ## NOTE: Although the RFC 959 defines the commands on 1985, we don't have to adhere to its strictness and can
@@ -323,11 +324,11 @@ class FTPLoginProxyInterceptor(FTPProxyInterceptor):
         ## e.g. in the below, the "space" should not be between the last param and the CRLF delimeter
 
     def _getPassword(self, request: str) -> str:
-        ret = re.search("^PASS (\w+)(\r\n|\r)", request)
+        ret = re.search(b"^PASS (\w+)(\r\n|\r)", request)
         return ret.groups()[0]
 
     def _getAccount(self, request: str) -> str:
-        ret = re.search("^ACCT (\w+)(\r\n|\r)", request)
+        ret = re.search(b"^ACCT (\w+)(\r\n|\r)", request)
         return ret.groups()[0]
 
 
