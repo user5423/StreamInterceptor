@@ -14,7 +14,7 @@ from typing import Dict, Optional, Tuple, Type, NamedTuple, List, Union, Iterabl
 
 from _proxyDS import Buffer, CommsDirection, proxyHandlerDescriptor, StreamInterceptor, PrivateStreamInterceptorDescriptor, \
                     SharedStreamInterceptorDescriptor, PrivateStreamInterceptorRegister, SharedStreamInterceptorRegister, \
-                    StreamInterceptorHelperMixin
+                    StreamInterceptorHelperMixin, StreamInterceptorRegistration
 
 from _exceptions import *
 ## TODO: Replace default exceptions with custom exceptions
@@ -45,17 +45,22 @@ from _exceptions import *
 ## dir1bii_hook,
 ##          shared2_hook
 
+
+
+## BUG: Tests for TCP proxy server are currently passing eventhough no data is being returned!!!
+## => The tests are either incomplete or we are manual test setup is causing the issues we are seeing
+##
+
+class Delimiters:
+    CRLF = b"\r\n"
+    LF = b"\n"
+
+
 @dataclass(unsafe_hash=True)
 class ProxyTunnel(StreamInterceptorHelperMixin):
     clientToProxySocket: socket.socket
     proxyToServerSocket: socket.socket
-    ## TODO: Abstract these types out
-    streamInterceptorRegistration: Tuple[
-                                            Union[
-                                                    Tuple[Tuple[PrivateStreamInterceptorRegister, ...], Tuple[PrivateStreamInterceptorRegister, ...]],
-                                                    SharedStreamInterceptorRegister
-                                                ]
-                                        ]
+    streamInterceptorRegistration: StreamInterceptorRegistration
  
     # Type[StreamInterceptor]
     ## TODO: Why do we need hash=None here?
@@ -64,8 +69,8 @@ class ProxyTunnel(StreamInterceptorHelperMixin):
 
     def __post_init__(self):
         ## Setup Bidirectional Buffers
-        self.serverToClientBuffer = Buffer([b"\r\n"], CommsDirection.CLIENT_TO_SERVER)
-        self.clientToServerBuffer = Buffer([b"\r\n"], CommsDirection.SERVER_TO_CLIENT)
+        self.serverToClientBuffer = Buffer([Delimiters.CRLF, Delimiters.LF], CommsDirection.CLIENT_TO_SERVER)
+        self.clientToServerBuffer = Buffer([Delimiters.CRLF, Delimiters.LF], CommsDirection.SERVER_TO_CLIENT)
 
         ## Set hooks on Bidirectional Buffers
         self._registerStreamInterceptors()
@@ -74,19 +79,20 @@ class ProxyTunnel(StreamInterceptorHelperMixin):
 
     def _registerPrivateBufferHooks(self, buffer: Buffer, registrations: List[PrivateStreamInterceptorRegister]) -> None:
         for registration in registrations:
+            assert isinstance(registration, PrivateStreamInterceptorRegister)
             streamInterceptorType = registration.streamInterceptorType
             isTransparent = registration.isTransparent
 
             if isTransparent:
-                buffer.setTransparentHook(streamInterceptorType)
+                buffer.setTransparentHook(streamInterceptorType, self)
             else:
-                buffer.setNonTransparentHook(streamInterceptorType)
+                buffer.setNonTransparentHook(streamInterceptorType, self)
 
         return None
 
     def _registerSharedBufferHook(self, registration: SharedStreamInterceptorRegister) -> None:
         streamInterceptorType = registration.streamInterceptorType
-        streamInterceptor = self._setupSharedHookCallable(streamInterceptorType, self.clientToServerBuffer, self.serverToClientBuffer)
+        streamInterceptor = self._setupSharedHookCallable(streamInterceptorType, self.clientToServerBuffer, self.serverToClientBuffer, self)
         isTransparent = registration.isTransparent
 
         if isTransparent:
@@ -109,11 +115,13 @@ class ProxyTunnel(StreamInterceptorHelperMixin):
                 self._registerPrivateBufferHooks(self.clientToServerBuffer, clientToServerHooks)
                 self._registerPrivateBufferHooks(self.serverToClientBuffer, serverToClientHooks)
             ## If it is a single registration, then it is a shared hook
-            elif isinstance(element, StreamInterceptor):
+            elif isinstance(element, SharedStreamInterceptorRegister):
                 sharedHook = element
                 self._registerSharedBufferHook(sharedHook)
             else:
-                raise TypeError(f"Unacceptable element type: {type(element)} ")
+                errorMsg = f"Unacceptable element type: {type(element)} "
+                print(type(element))
+                raise TypeError(errorMsg)
 
         return None
 
@@ -188,12 +196,7 @@ class ProxyTunnel(StreamInterceptorHelperMixin):
 class ProxyConnections:
     PROXY_HOST: str
     PROXY_PORT: int
-    streamInterceptorRegistration: Tuple[
-                                            Union[
-                                                    Tuple[Tuple[PrivateStreamInterceptorRegister, ...], Tuple[PrivateStreamInterceptorRegister, ...]],
-                                                    SharedStreamInterceptorRegister
-                                                ]
-                                        ]
+    streamInterceptorRegistration: StreamInterceptorRegistration
     selector: selectors.BaseSelector
 
     _sock: Dict[socket.socket, ProxyTunnel] = field(init=False, default_factory=dict)
@@ -296,38 +299,42 @@ class ProxyConnections:
         return s
 
 
-
 ## BUG: It seems that the eventLoop may not be handling requests when the selector is polled
 ## --> The events are retrieved, and then immediately polled again
 ## --> I ran this for a single TCP connectino setup (no data sent)
 ## ==> This could be common (e.g. bytes are being transfered during TCP setup)
 ## --> Need to doule check though!!!
 
+## TODO: Cleanup overly long type annotations (breaking them up into composite type annotations)
 ## TODO: Add context manager
 ## TODO: Make into abst
-@dataclass
 class TCPProxyServer:
-    HOST: str
-    PORT: int
-    PROXY_HOST: str
-    PROXY_PORT: int
-    streamInterceptorRegistration: Tuple[
-                                            Union[
-                                                    Tuple[Tuple[PrivateStreamInterceptorRegister, ...], Tuple[PrivateStreamInterceptorRegister, ...]],
-                                                    SharedStreamInterceptorRegister
-                                                ]
-                                        ] = field(default_factory=tuple)
+    def __init__(self, HOST: str,
+                       PORT: int,
+                       PROXY_HOST: str,
+                       PROXY_PORT: int,
+                       streamInterceptorRegistration: StreamInterceptorRegistration = (),
+                       MESSAGE_DELIMITERS: List[bytes] = (Delimiters.CRLF, Delimiters.LF),
+                       addressReuse: bool = False,
+                       selectorTimeout: float = 0.1
+        ) -> None:
+        self.streamInterceptorRegistration = streamInterceptorRegistration
+        self.__post_init__(HOST, PORT, PROXY_HOST, PROXY_PORT, MESSAGE_DELIMITERS, addressReuse, selectorTimeout)
 
-    MESSAGE_DELIMITERS: List[bytes] = (b"\r\n",)
-    addressReuse: bool = field(default=False)
 
-    serverSocket: socket.socket = field(init=False, repr=False)
-    selector: selectors.BaseSelector = field(init=False, repr=False, default_factory=selectors.DefaultSelector)
-    proxyConnections: ProxyConnections = field(init=False, repr=True)
-    _exitFlag: bool = field(init=False, default=False)
-    _terminated: threading.Event = field(init=False, default_factory=threading.Event)
+    def __post_init__(self, HOST: str, PORT: int, PROXY_HOST: str, PROXY_PORT: int, MESSAGE_DELIMITERS: List[bytes], addressReuse: bool, selectorTimeout: float) -> None:
+        self.HOST = HOST
+        self.PORT = PORT
+        self.PROXY_HOST = PROXY_HOST
+        self.PROXY_PORT = PROXY_PORT
+        self.MESSAGE_DELIMITERS = MESSAGE_DELIMITERS
+        self.addressReuse = addressReuse
+        self.selectorTimeout = selectorTimeout
 
-    def __post_init__(self):
+        self._exitFlag: bool = False
+        self._terminated: threading.Event = threading.Event()
+        self.selector: selectors.BaseSelector = selectors.DefaultSelector()
+
         try:
             ## NOTE: This removes root Handlers - if root handlers are not empty, logging won't write to our desired file
             for handler in logging.root.handlers[:]:
@@ -367,7 +374,7 @@ class TCPProxyServer:
         self._logDebugMessage("Server", "Server-Running", "Success")
         while self._exitFlag is False:
             ## TODO: Modify the timeout??
-            events = self.selector.select(timeout=0.1)
+            events = self.selector.select(timeout=self.selectorTimeout)
             for selectorKey, bitmask in events:
                 if selectorKey.data == "ServerSocket":
                     # print("TCPProxyServer - Accepting new connection")
@@ -459,7 +466,7 @@ class TCPProxyServer:
                 return proxyConns.closeTunnel(proxyTunnel)
             
 
-    def _logDebugMessage(self, user: str = "Server", eventType: str = "Default", description: str = "Default",) -> None:
+    def _logDebugMessage(self, user: str = "Server", eventType: str = "Default", description: str = "Default") -> None:
         logging.debug(f"{datetime.now()}\t{self.HOST}\t{self.PORT}\t{user}\t{eventType}\t{description}")
         
 
@@ -475,10 +482,9 @@ class TCPProxyServer:
 
 
 def main():
-    HOST, PORT = "0.0.0.0", 8080
-    PROXY_HOST, PROXY_PORT = "127.0.0.1", 80
-    streamInterceptorType = StreamInterceptor
-    TPS = TCPProxyServer(HOST, PORT, PROXY_HOST, PROXY_PORT, streamInterceptorType)
+    HOST, PORT = "0.0.0.0", 8081
+    PROXY_HOST, PROXY_PORT = "127.0.0.1", 21
+    TPS = TCPProxyServer(HOST, PORT, PROXY_HOST, PROXY_PORT)
     TPS.run()
 
 

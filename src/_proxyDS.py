@@ -19,9 +19,10 @@ class StreamInterceptor:
     ## NOTE: This needs to rewrite any requests to the real server
 
     class Hook:
-        def __init__(self, server: Optional["TCPProxyServer"] = None, buffer: Optional["Buffer"] = None):
-            self.buffer = buffer
+        def __init__(self, server: Optional["TCPProxyServer"] = None, proxyTunnel: Optional["ProxyTunnel"] = None, buffer: Optional["Buffer"] = None):
             self.server = server
+            self.buffer = buffer
+            self.proxyTunnel = proxyTunnel
 
         def __call__(self, message: bytes) -> Any:
             raise NotImplementedError
@@ -29,6 +30,13 @@ class StreamInterceptor:
     class ClientToServerHook(Hook): ...
 
     class ServerToClientHook(Hook): ...
+
+    class SharedHook(Hook):
+        def __init__(self, server: Optional["TCPProxyServer"] = None, proxyTunnel: Optional["ProxyTunnel"] = None, clientToServerBuffer: Optional["Buffer"] = None, serverToClientBuffer: Optional["Buffer"] = None):
+            self.server = server
+            self.proxyTunnel = proxyTunnel
+            self.clientToServerBuffer = clientToServerBuffer
+            self.serverToClientBuffer = serverToClientBuffer
 
 
 
@@ -99,21 +107,21 @@ class StreamInterceptorHelperMixin:
         return BoundFunctor
 
     @classmethod
-    def _setupHookCallable(cls, hook: Type[Callable[["Buffer", "TCPServer"], None]], buffer: "Buffer", server: Optional["TCPProxyServer"] = None, nonDefaultArgs: Iterable[Any] = (), nonDefaultKwargs: Dict = {}) -> Callable:
+    def _setupHookCallable(cls, hook: Type[Callable[["Buffer", "TCPServer"], None]], buffer: "Buffer", proxyTunnel: Optional["ProxyTunnel"] = None, server: Optional["TCPProxyServer"] = None, nonDefaultArgs: Iterable[Any] = (), nonDefaultKwargs: Dict = {}) -> Callable:
         ## If it is a generators a function (i.e. a func that returns a generator), we need to execute a single next() statement before we can perform .send() later
         ## This essentially execute the setup code which would correspond to __init__() in a functor
         if inspect.isgeneratorfunction(hook):
             hook = cls._bindNonDefaultGeneratorArgs(hook, nonDefaultArgs, nonDefaultKwargs)
-            _hook = hook(server=server, buffer=buffer)
+            _hook = hook(server=server, proxyTunnel=proxyTunnel, buffer=buffer)
             next(_hook)
         ## If it is a functor (i.e. has a __init__ and __call__ method (which functions also have) + inherits from type (which functions do not)), then we call the constructor+initializer
         elif isinstance(hook, type) and hasattr(hook, "__init__") and hasattr(hook, "__call__"):
             hook = cls._bindNonDefaultFunctorArgs(hook, nonDefaultArgs, nonDefaultKwargs)
-            _hook = hook(server=server, buffer=buffer)
+            _hook = hook(server=server, proxyTunnel=proxyTunnel, buffer=buffer)
         ## If it is a function, then we bind the server and buffer variables to the function
         elif inspect.isfunction(hook):
             hook = cls._bindNonDefaultFunctionArgs(hook, nonDefaultArgs, nonDefaultKwargs)
-            _hook = functools.partial(hook, server=server, buffer=buffer)
+            _hook = functools.partial(hook, server=server, proxyTunnel=proxyTunnel, buffer=buffer)
         else:
             raise TypeError(f"The type of {type(hook)} is currently not supported for setting private hooks")
 
@@ -121,17 +129,17 @@ class StreamInterceptorHelperMixin:
     
     ## TODO: May need to replace the two buffer arguments with the whole proxyTunnel
     @classmethod
-    def _setupSharedHookCallable(cls, hook: Type[Callable[["Buffer"], None]], clientToServerBuffer: "Buffer", serverToClientBuffer: "Buffer", server: Optional["TCPProxyServer"] = None, nonDefaultArgs: Iterable[Any] = (), nonDefaultKwargs: Dict = {}) -> Callable:
+    def _setupSharedHookCallable(cls, hook: Type[Callable[["Buffer"], None]], clientToServerBuffer: "Buffer", serverToClientBuffer: "Buffer", proxyTunnel: Optional["ProxyTunnel"] = None, server: Optional["TCPProxyServer"] = None, nonDefaultArgs: Iterable[Any] = (), nonDefaultKwargs: Dict = {}) -> Callable:
         if inspect.isgeneratorfunction(hook):
             hook = cls._bindNonDefaultGeneratorArgs(hook, nonDefaultArgs, nonDefaultKwargs)
-            _hook = hook(server=server, clientToServerBuffer=clientToServerBuffer, serverToClientBuffer=serverToClientBuffer)
+            _hook = hook(server=server, proxyTunnel=proxyTunnel, clientToServerBuffer=clientToServerBuffer, serverToClientBuffer=serverToClientBuffer)
             next(_hook)
         elif isinstance(hook, type) and hasattr(hook, "__init__") and hasattr(hook, "__call__"):
             hook = cls._bindNonDefaultFunctorArgs(hook, nonDefaultArgs, nonDefaultKwargs)
-            _hook = hook(server=server, clientToServerBuffer=clientToServerBuffer, serverToClientBuffer=serverToClientBuffer)
+            _hook = hook(server=server, proxyTunnel=proxyTunnel, clientToServerBuffer=clientToServerBuffer, serverToClientBuffer=serverToClientBuffer)
         elif inspect.isfunction(hook):
             hook = cls._bindNonDefaultFunctionArgs(hook, nonDefaultArgs, nonDefaultKwargs)
-            _hook = functools.partial(hook, server=server, clientToServerBuffer=clientToServerBuffer, serverToClientBuffer=serverToClientBuffer)
+            _hook = functools.partial(hook, server=server, proxyTunnel=proxyTunnel, clientToServerBuffer=clientToServerBuffer, serverToClientBuffer=serverToClientBuffer)
         else:
             raise TypeError(f"The type of {type(hook)} is currently not supported for setting private hooks")
 
@@ -142,7 +150,15 @@ class StreamInterceptorHelperMixin:
     def _executeHook(cls, hook: Callable, message: bytes, isShared: bool, callbackArgument: str) -> Any:
         if isinstance(hook, types.GeneratorType):
             if isShared:
-                return hook.send(**{callbackArgument: message})
+                ## Setup hook generator single parameter
+                if callbackArgument == "req":
+                    req = message
+                    resp = None
+                else:
+                    req = None
+                    resp = message
+                
+                return hook.send((req, resp,)) ## Generators can only send a single argument!!!
             return hook.send(message)
         else:
             if isShared:
@@ -200,9 +216,9 @@ class Buffer(StreamInterceptorHelperMixin):
     _incomingData: bytearray = field(init=False, default_factory=bytearray)
     _outgoingData: bytearray = field(init=False, default_factory=bytearray)
     _messages: deque[bytes] = field(init=False, default_factory=deque)
-    _releasableBytes: int = sys.maxsize ## As long as _releasableBytes is larger than _MAX_BUFFER_SIZE, then any integer value should be ok
-    _MAX_BUFFER_SIZE: int = 1024 * 128 ## 128KB
-  
+    _releasableBytes: int = field(init=False, default=sys.maxsize) ## As long as _releasableBytes is larger than _MAX_BUFFER_SIZE, then any integer value should be ok
+    _remainingIncomingDataSize: int = field(init=False, default=-1)
+    _MAX_BUFFER_SIZE: int = field(init=False, default=1024 * 128) ## 128KB
     _hooks: List[Callable[[bytes], Union[bytes, bool]]] = field(init=False, default_factory=list)
     _hookIndex: int = field(init=False, default=0)
 
@@ -234,6 +250,13 @@ class Buffer(StreamInterceptorHelperMixin):
     def read(self, count: int = 0) -> bytes:
         """This reads bytes from the intercepted data stream
         `buffer()._incomingData` (without popping)"""
+        ## NOTE: A non-transparent action may be performed on the buffer from a generator streamInterceptor
+        ## Therefore, we trigger execParsing() in-case any data has been added
+        ## NOTE: There is no case that the data is modified here (as this would be performed between the transfer between self._incomingData --> self._outgoingData via execParsing() method)
+        if self._remainingIncomingDataSize != len(self._incomingData):
+            self._executeMessageParser()
+
+
         ## With the FTP proxy server, we want to slow-down replies (to force ordering)
         ## Therefore, we might read less bytes than anticipated
         ## We will still read from _incomingData, but we perform self._incomingData[:min(count, self._releasable)]
@@ -246,6 +269,11 @@ class Buffer(StreamInterceptorHelperMixin):
     def pop(self, count: int = 0) -> bytes:
         """This pops bytes from the intercepted data stream
         buffer `buffer()._outgoingData` (from the left)"""
+        ## NOTE: See notes on Buffer.read() method regarding retriggering executeMessageParser() in case a streamInterceptor has added additional content!
+        ## TODO: Re-evaluate the approach of triggering message parsing on read() instead of waiting for a subsequent write() method to be invoked by flow of data between client and server
+        if self._remainingIncomingDataSize != len(self._incomingData):
+            self._executeMessageParser()
+
         if count < 0:
             count = len(self._outgoingData)
         ret = self.read(min(count, self._releasableBytes))
@@ -260,6 +288,11 @@ class Buffer(StreamInterceptorHelperMixin):
         self._executeMessageParser()
         ## NOTE: In the future, we may want to provide an alternative method called _execStreamParsing()
         ## - This allows library users to bypass forcing parsing of streams into messages
+
+    def writeOnly(self, chunk: bytearray) -> None:
+        """Writes the received chunk to self._incomingData, but unlike 'write()' method
+        , it does not execute message parsing to transfer data to self._outgoingData"""
+        self._incomingData += chunk
 
 
     ############## Message Queue Operations ########################
@@ -315,6 +348,8 @@ class Buffer(StreamInterceptorHelperMixin):
                 ## otherwise we stop processing and sending out messages
                 break
 
+        ## Here we store the size of self._incomingMessage in case a streamInterceptor modifies it before we push self._outgoingData to clientToProxySocket
+        self._remainingIncomingDataSize = len(self._incomingData)
         return None
 
 
@@ -384,24 +419,24 @@ class Buffer(StreamInterceptorHelperMixin):
     ## e.g. both buffers in a tunnel can share underlying callables.
 
 
-    def setNonTransparentHook(self, hook: Type[Callable[["Buffer"], None]], server: Optional["TCPProxyServer"] = None, hookArgs: Iterable[Any] = (), hookKwargs: Dict[str, Any] = {}) -> None:
+    def setNonTransparentHook(self, hook: Type[Callable[["Buffer"], None]], proxyTunnel: Optional["ProxyTunnel"] = None, server: Optional["TCPProxyServer"] = None, hookArgs: Iterable[Any] = (), hookKwargs: Dict[str, Any] = {}) -> None:
         """ This message hook returns true if the message should be consumed in the buffer, otherwise
         if it returns false, then the current message is not processed and neither are future messages.
         This works well for protocols that we wish to install hooks that benefit from forcing ordering of messages being sent
         NOTE: Depending on the protocols we end up supporting, we may need to redesign this system."""
         isShared = False
         isTransparent = False
-        nonTransparentHook = self._setupHookCallable(hook, self, server, hookArgs, hookKwargs)
+        nonTransparentHook = self._setupHookCallable(hook, self, proxyTunnel, server, hookArgs, hookKwargs)
         self._hooks.append(PrivateStreamInterceptorDescriptor(nonTransparentHook, isTransparent, isShared))
         return None
 
-    def setTransparentHook(self, hook: Type[Callable[["Buffer"], None]], server: Optional["TCPProxyServer"] = None, hookArgs: Iterable[Any] = (), hookKwargs: Dict[str, Any] = {}) -> None:
+    def setTransparentHook(self, hook: Type[Callable[["Buffer"], None]], proxyTunnel: Optional["ProxyTunnel"] = None, server: Optional["TCPProxyServer"] = None, hookArgs: Iterable[Any] = (), hookKwargs: Dict[str, Any] = {}) -> None:
         """This adds a message hook which is executed whenever a message is completely parsed from
         the message queue AND  is allowed by the transparent hook (which may order replies and responses
         between the client and server and manipulate incoming/outgoing data"""
         isShared = False
         isTransparent = True
-        transparentHook = self._setupHookCallable(hook, self, server, hookArgs, hookKwargs)
+        transparentHook = self._setupHookCallable(hook, self, proxyTunnel, server, hookArgs, hookKwargs)
         self._hooks.append(PrivateStreamInterceptorDescriptor(transparentHook, isTransparent, isShared))
         return None
 
