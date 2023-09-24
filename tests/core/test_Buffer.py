@@ -409,11 +409,11 @@ class Test_Buffer_Hooks:
     ## TODO: Need to test whether execmessageParsing is being executed correctly!!
     ## TODO: Need to assert whether the state of the buffer doesn't change
 
-    def _simulateHook(self, buffer: Buffer, message: bytes, flag: "Type[self._flag]", hookType: "Type[self._hook]", hookStr: str, hookArgs: Tuple = (), hookKwargs: Dict = {}) -> None:
+    def _simulateHook(self, buffer: Buffer, proxyTunnel: "ProxyTunnel", server: "TCPProxyServer", message: bytes, flag: "Type[self._flag]", hookType: "Type[self._hook]", hookStr: str, hookArgs: Tuple = (), hookKwargs: Dict = {}) -> None:
         if hookStr == "transparent":
-            buffer.setTransparentHook(hookType, buffer, hookArgs, hookKwargs)
+            buffer.setTransparentHook(hookType, proxyTunnel, server, hookArgs, hookKwargs)
         else:
-            buffer.setNonTransparentHook(hookType, buffer, hookArgs, hookKwargs)
+            buffer.setNonTransparentHook(hookType, proxyTunnel, server, hookArgs, hookKwargs)
         
         new_message, continueProcessing = buffer._executeHooks(message)
         ## TODO: Run assertion tests on output of executeHooks()
@@ -434,7 +434,7 @@ class Test_Buffer_Hooks:
     def test_transparentHookFunctor_noParams(self, hookTestResources):
         b, flag, message = hookTestResources
         class UserHook:
-            def __init__(self, server=None, buffer=None):
+            def __init__(self, server=None, proxyTunnel=None, buffer=None):
                 self.buffer = buffer
 
             def __call__(self, message: bytearray) -> bool:
@@ -442,14 +442,18 @@ class Test_Buffer_Hooks:
                 flag.setFlag()
                 return True
 
-        self._simulateHook(b, message, flag, UserHook, "transparent")
+        proxyTunnel = None
+        proxyServer = None
+        self._simulateHook(b, proxyTunnel, proxyServer, message, flag, UserHook, "transparent")
 
 
     def test_transparentHookFunctor_args(self, hookTestResources):
         b, flag, message = hookTestResources
+        proxyTunnel = None
+        proxyServer = None
         args = ("arg1", "arg2")
         class UserHook:
-            def __init__(self, arg1, arg2, server=None, buffer=None):
+            def __init__(self, arg1, arg2, server=None, proxyTunnel=None, buffer=None):
                 self.arg1 = arg1
                 self.arg2 = arg2
                 self.buffer = buffer
@@ -459,7 +463,7 @@ class Test_Buffer_Hooks:
                 flag.setFlag()
                 return True
 
-        self._simulateHook(b, message, flag, UserHook, "transparent", args)
+        self._simulateHook(b, proxyTunnel, proxyServer, message, flag, UserHook, "transparent", args)
         assert b._hooks[0].streamInterceptor.arg1 == args[0]
         assert b._hooks[0].streamInterceptor.arg2 == args[1]
 
@@ -469,7 +473,7 @@ class Test_Buffer_Hooks:
         kwargs = {"kwarg1": "val1", "kwarg2": "val2"}
 
         class UserHook:
-            def __init__(self, kwarg1=None, kwarg2=None, server=None, buffer=None):
+            def __init__(self, kwarg1=None, kwarg2=None, server=None, proxyTunnel=None, buffer=None):
                 self.kwarg1 = kwarg1
                 self.kwarg2 = kwarg2
                 self.buffer = buffer
@@ -479,7 +483,9 @@ class Test_Buffer_Hooks:
                 flag.setFlag()
                 return True
 
-        self._simulateHook(b, message, flag, UserHook, "transparent", hookKwargs = kwargs)
+        proxyTunnel = None
+        proxyServer = None
+        self._simulateHook(b, proxyTunnel, proxyServer, message, flag, UserHook, "transparent", hookKwargs = kwargs)
         assert b._hooks[0].streamInterceptor.kwarg1 == kwargs["kwarg1"]
         assert b._hooks[0].streamInterceptor.kwarg2 == kwargs["kwarg2"]
 
@@ -488,7 +494,7 @@ class Test_Buffer_Hooks:
         kwargs = {"kwarg1": "val1", "kwarg2": "val2"}
         args = ("arg1", "arg2")
         class UserHook:
-            def __init__(self, arg1, arg2, kwarg1=None, kwarg2=None, server=None, buffer=None):
+            def __init__(self, arg1, arg2, kwarg1=None, kwarg2=None, server=None, proxyTunnel=None, buffer=None):
                 self.arg1 = arg1
                 self.arg2 = arg2
                 self.kwarg1 = kwarg1
@@ -500,7 +506,9 @@ class Test_Buffer_Hooks:
                 flag.setFlag()
                 return True
 
-        self._simulateHook(b, message, flag, UserHook, "transparent", args, kwargs)
+        proxyTunnel = None
+        proxyServer = None
+        self._simulateHook(b, proxyTunnel, proxyServer, message, flag, UserHook, "transparent", args, kwargs)
         assert b._hooks[0].streamInterceptor.kwarg1 == kwargs["kwarg1"]
         assert b._hooks[0].streamInterceptor.kwarg2 == kwargs["kwarg2"]
         assert b._hooks[0].streamInterceptor.arg1 == args[0]
@@ -509,7 +517,7 @@ class Test_Buffer_Hooks:
 
     def test_transparentHookGenerator_noParams(self, hookTestResources):
         b, flag, message = hookTestResources
-        def UserHook(server=None, buffer=None):
+        def UserHook(server=None, proxyTunnel=None, buffer=None):
             nonlocal flag
             mesage = yield
             while True:
@@ -517,14 +525,16 @@ class Test_Buffer_Hooks:
                 message = yield True
             return None
 
-        self._simulateHook(b, message, flag, UserHook, "transparent")
+        proxyTunnel = None
+        proxyServer = None
+        self._simulateHook(b, proxyTunnel, proxyServer, message, flag, UserHook, "transparent")
 
 
     def test_transparentHookGenerator_args(self, hookTestResources):
         b, flag, message = hookTestResources
         args = ("arg1", "arg2")
         _arg1 = None; _arg2 = None
-        def UserHook(arg1, arg2, server=None, buffer=None):
+        def UserHook(arg1, arg2, server=None, proxyTunnel=None, buffer=None):
             nonlocal _arg1, _arg2
             _arg1 = arg1; _arg2 = arg2
             nonlocal flag
@@ -534,7 +544,9 @@ class Test_Buffer_Hooks:
                 message = yield True
             return True
 
-        self._simulateHook(b, message, flag, UserHook, "transparent", args)
+        proxyTunnel = None
+        proxyServer = None
+        self._simulateHook(b, proxyTunnel, proxyServer, message, flag, UserHook, "transparent", args)
         assert _arg1 == args[0]
         assert _arg2 == args[1]
 
@@ -542,7 +554,7 @@ class Test_Buffer_Hooks:
         b, flag, message = hookTestResources
         kwargs = {"kwarg1": "val1", "kwarg2": "val2"}
         _kwarg1 = None; _kwarg2 = None
-        def UserHook(kwarg1, kwarg2, server=None, buffer=None):
+        def UserHook(kwarg1, kwarg2, server=None, proxyTunnel=None, buffer=None):
             nonlocal _kwarg1, _kwarg2
             _kwarg1 = kwarg1; _kwarg2 = kwarg2
             nonlocal flag
@@ -551,7 +563,9 @@ class Test_Buffer_Hooks:
                 flag.setFlag()
             return True
 
-        self._simulateHook(b, message, flag, UserHook, "transparent", hookKwargs=kwargs)
+        proxyTunnel = None
+        proxyServer = None
+        self._simulateHook(b, proxyTunnel, proxyServer, message, flag, UserHook, "transparent", hookKwargs=kwargs)
         assert _kwarg1 == kwargs["kwarg1"]
         assert _kwarg2 == kwargs["kwarg2"]
 
@@ -562,7 +576,7 @@ class Test_Buffer_Hooks:
         kwargs = {"kwarg1": "val1", "kwarg2": "val2"}
         _arg1 = None; _arg2 = None
         _kwarg1 = None; _kwarg2 = None
-        def UserHook(arg1, arg2, kwarg1=None, kwarg2=None, server=None, buffer=None):
+        def UserHook(arg1, arg2, kwarg1=None, kwarg2=None, server=None, proxyTunnel=None, buffer=None):
             nonlocal _arg1, _arg2, _kwarg1, _kwarg2
             _arg1 = arg1; _arg2 = arg2; _kwarg1 = kwarg1; _kwarg2 = kwarg2
             nonlocal flag
@@ -571,7 +585,9 @@ class Test_Buffer_Hooks:
                 flag.setFlag()
             return True
 
-        self._simulateHook(b, message, flag, UserHook, "transparent", args, kwargs)
+        proxyTunnel = None
+        proxyServer = None
+        self._simulateHook(b, proxyTunnel, proxyServer, message, flag, UserHook, "transparent", args, kwargs)
         assert _arg1 == args[0]
         assert _arg2 == args[1]
         assert _kwarg1 == kwargs["kwarg1"]
@@ -589,7 +605,7 @@ class Test_Buffer_Hooks:
     def test_nonTransparentHookFunctor_noParams(self, hookTestResources):
         b, flag, message = hookTestResources
         class ProcessingHook:
-            def __init__(self, server=None, buffer=None):
+            def __init__(self, server=None, proxyTunnel=None, buffer=None):
                 self.server = server
                 self.buffer = buffer
 
@@ -598,14 +614,16 @@ class Test_Buffer_Hooks:
                 flag.setFlag()
                 return message, True
 
-        self._simulateHook(b, message, flag, ProcessingHook, "processing")
+        proxyTunnel = None
+        proxyServer = None
+        self._simulateHook(b, proxyTunnel, proxyServer, message, flag, ProcessingHook, "processing")
 
 
     def test_nonTransparentHookFunctor_args(self, hookTestResources):
         b, flag, message = hookTestResources
         args = ("arg1", "arg2")
         class ProcessingHook:
-            def __init__(self, arg1, arg2, server=None, buffer=None):
+            def __init__(self, arg1, arg2, server=None, proxyTunnel=None, buffer=None):
                 self.arg1 = arg1
                 self.arg2 = arg2
                 self.buffer = buffer
@@ -615,7 +633,9 @@ class Test_Buffer_Hooks:
                 flag.setFlag()
                 return message, True
 
-        self._simulateHook(b, message, flag, ProcessingHook, "processing", args)
+        proxyTunnel = None
+        proxyServer = None
+        self._simulateHook(b, proxyTunnel, proxyServer, message, flag, ProcessingHook, "processing", args)
         assert b._hooks[0].streamInterceptor.arg1 == args[0]
         assert b._hooks[0].streamInterceptor.arg2 == args[1]
 
@@ -625,7 +645,7 @@ class Test_Buffer_Hooks:
         kwargs = {"kwarg1": "val1", "kwarg2": "val2"}
 
         class ProcessingHook:
-            def __init__(self, kwarg1=None, kwarg2=None, server=None, buffer=None):
+            def __init__(self, kwarg1=None, kwarg2=None, server=None, proxyTunnel=None, buffer=None):
                 self.kwarg1 = kwarg1
                 self.kwarg2 = kwarg2
                 self.buffer = buffer
@@ -635,7 +655,9 @@ class Test_Buffer_Hooks:
                 flag.setFlag()
                 return message, True
 
-        self._simulateHook(b, message, flag, ProcessingHook, "processing", hookKwargs = kwargs)
+        proxyTunnel = None
+        proxyServer = None
+        self._simulateHook(b, proxyTunnel, proxyServer, message, flag, ProcessingHook, "processing", hookKwargs = kwargs)
         assert b._hooks[0].streamInterceptor.kwarg1 == kwargs["kwarg1"]
         assert b._hooks[0].streamInterceptor.kwarg2 == kwargs["kwarg2"]
 
@@ -645,7 +667,7 @@ class Test_Buffer_Hooks:
         kwargs = {"kwarg1": "val1", "kwarg2": "val2"}
         args = ("arg1", "arg2")
         class ProcessingHook:
-            def __init__(self, arg1, arg2, kwarg1=None, kwarg2=None, server=None, buffer=None):
+            def __init__(self, arg1, arg2, kwarg1=None, kwarg2=None, server=None, proxyTunnel=None, buffer=None):
                 self.arg1 = arg1
                 self.arg2 = arg2
                 self.kwarg1 = kwarg1
@@ -657,7 +679,9 @@ class Test_Buffer_Hooks:
                 flag.setFlag()
                 return message, True
 
-        self._simulateHook(b, message, flag, ProcessingHook, "processing", args, kwargs)
+        proxyTunnel = None
+        proxyServer = None
+        self._simulateHook(b, proxyTunnel, proxyServer, message, flag, ProcessingHook, "processing", args, kwargs)
         assert b._hooks[0].streamInterceptor.kwarg1 == kwargs["kwarg1"]
         assert b._hooks[0].streamInterceptor.kwarg2 == kwargs["kwarg2"]
         assert b._hooks[0].streamInterceptor.arg1 == args[0]
@@ -666,7 +690,7 @@ class Test_Buffer_Hooks:
 
     def test_nonTransparentHookGenerator_noParams(self, hookTestResources):
         b, flag, message = hookTestResources
-        def ProcessingHook(server=None, buffer=None):
+        def ProcessingHook(server=None, proxyTunnel=None, buffer=None):
             nonlocal flag
             message = yield None
             while True:
@@ -674,14 +698,16 @@ class Test_Buffer_Hooks:
                 message = yield message, True
             return None
 
-        self._simulateHook(b, message, flag, ProcessingHook, "processing")
+        proxyTunnel = None
+        proxyServer = None
+        self._simulateHook(b, proxyTunnel, proxyServer, message, flag, ProcessingHook, "processing")
 
 
     def test_nonTransparentHookGenerator_args(self, hookTestResources):
         b, flag, message = hookTestResources
         args = ("arg1", "arg2")
         _arg1 = None; _arg2 = None
-        def ProcessingHook(arg1, arg2, server=None, buffer=None):
+        def ProcessingHook(arg1, arg2, server=None, proxyTunnel=None, buffer=None):
             nonlocal _arg1, _arg2, args
             _arg1 = arg1; _arg2 = arg2
             nonlocal flag
@@ -691,7 +717,9 @@ class Test_Buffer_Hooks:
                 message = yield message, True
             return None
 
-        self._simulateHook(b, message, flag, ProcessingHook, "processing", args)
+        proxyTunnel = None
+        proxyServer = None
+        self._simulateHook(b, proxyTunnel, proxyServer, message, flag, ProcessingHook, "processing", args)
         assert _arg1 == args[0]
         assert _arg2 == args[1]
 
@@ -700,7 +728,7 @@ class Test_Buffer_Hooks:
         b, flag, message = hookTestResources
         kwargs = {"kwarg1": "val1", "kwarg2": "val2"}
         _kwarg1 = None; _kwarg2 = None
-        def ProcessingHook(kwarg1=None, kwarg2=None, server=None, buffer=None):
+        def ProcessingHook(kwarg1=None, kwarg2=None, server=None, proxyTunnel=None, buffer=None):
             nonlocal _kwarg1, _kwarg2, kwargs
             _kwarg1 = kwarg1; _kwarg2 = kwarg2
             nonlocal flag
@@ -710,7 +738,9 @@ class Test_Buffer_Hooks:
                 message = yield message, True
             return None
 
-        self._simulateHook(b, message, flag, ProcessingHook, "processing", hookKwargs=kwargs)
+        proxyTunnel = None
+        proxyServer = None
+        self._simulateHook(b, proxyTunnel, proxyServer, message, flag, ProcessingHook, "processing", hookKwargs=kwargs)
         assert _kwarg1 == kwargs["kwarg1"]
         assert _kwarg2 == kwargs["kwarg2"]
 
@@ -720,7 +750,7 @@ class Test_Buffer_Hooks:
         kwargs = {"kwarg1": "val1", "kwarg2": "val2"}
         _arg1 = None; _arg2 = None
         _kwarg1 = None; _kwarg2 = None
-        def ProcessingHook(arg1, arg2, kwarg1 = None, kwarg2 = None, server=None, buffer=None):
+        def ProcessingHook(arg1, arg2, kwarg1 = None, kwarg2 = None, server=None, proxyTunnel=None, buffer=None):
             nonlocal _arg1, _arg2, _kwarg1, _kwarg2
             _arg1 = arg1; _arg2 = arg2; _kwarg1 = kwarg1; _kwarg2 = kwarg2
             nonlocal flag
@@ -730,7 +760,9 @@ class Test_Buffer_Hooks:
                 message = yield message, True
             return None
 
-        self._simulateHook(b, message, flag, ProcessingHook, "processing", args, kwargs)
+        proxyTunnel = None
+        proxyServer = None
+        self._simulateHook(b, proxyTunnel, proxyServer, message, flag, ProcessingHook, "processing", args, kwargs)
         assert _arg1 == args[0]
         assert _arg2 == args[1]
         assert _kwarg1 == kwargs["kwarg1"]

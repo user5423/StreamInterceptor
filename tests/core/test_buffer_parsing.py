@@ -14,7 +14,7 @@ class BufferReqParsingHelpers:
     @classmethod
     def _setupTransparentHookMock(cls, buffer: Buffer) -> collections.deque:
         transparentQueue = collections.deque([])
-        def transparentHook(request, buffer, server) -> None:
+        def transparentHook(request, buffer, proxyTunnel, server) -> None:
             nonlocal transparentQueue
             transparentQueue.appendleft(request)
             return request
@@ -25,7 +25,7 @@ class BufferReqParsingHelpers:
     @classmethod
     def _setupNonTransparentHookMock(cls, buffer: Buffer) -> collections.deque:
         nonTransparentQueue = collections.deque([])
-        def nonTransparentHook(request, buffer, server) -> Optional[bytes]:
+        def nonTransparentHook(request, buffer, proxyTunnel, server) -> Optional[bytes]:
             nonlocal nonTransparentQueue
             nonTransparentQueue.appendleft(request)
             return request, True
