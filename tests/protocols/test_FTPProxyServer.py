@@ -97,8 +97,7 @@ class FTPTestClient:
         clientDataSocksCounter = 0
         
         message, connectionAlive = self._recvControlStream(clientControlSock, controlBuffer)
-        if connectionAlive is False:
-            controlMessages.append((message, None))
+        controlMessages.append(message)
 
         for msg in sequence:
             # print(f"handling msg: {msg}")
@@ -268,3 +267,176 @@ def setupConnSetupTests(setupContSocketPair):
     # print("setupConnSetup")
     yield proxy, envAddr, clientSock, ephemeralServerSock
     proxy.controlServerSocket.close()
+
+
+
+FTPTestUsername = os.environ["FTP_USER"]
+FTPTestPassword = os.environ["SI_FTP_PASSWORD"]
+
+## TODO: Overhaul these tests to use regex. FTP servers can be configured to send custom messages which we
+## want to test that our proxy server can parse
+class Test_FTPProxyServer:
+    def _verifyExpectedControlMessages(self, receivedMessages: List[bytes], expectedMessages: List[bytes]) -> None:
+        expectedMsgCounter = 0
+        expectedMsgSeqLen = len(expectedMessages)
+        for receivedMsg in receivedMessages:
+            if expectedMsgCounter == expectedMsgSeqLen:
+                break
+            expectedMsg = expectedMessages[expectedMsgCounter]
+            # print("expected: ", repr(expectedMsg))
+            # print("received: ", repr(receivedMsg))
+            if re.match(expectedMsg, receivedMsg):
+                expectedMsgCounter += 1
+            
+        assert expectedMsgCounter == expectedMsgSeqLen
+        return None
+
+
+    def test_setupUSERConnection(self):
+        client, proxy, envAddr = FTPProxyServerTestResources.setupEnvironment()
+        t1 = threading.Thread(target=proxy.run)
+        t1.start()
+
+        controlMessages, dataMessages = client.simulateFTPSequence(
+            [
+                bytes(f"USER {FTPTestUsername}\r\n", encoding="utf-8"),
+            ],
+        )
+
+        proxy.close()
+        t1.join()
+
+        expectedControlMessages = [
+            b"331 Please specify the password.\r\n",
+        ]
+
+        self._verifyExpectedControlMessages(controlMessages, expectedControlMessages)
+
+
+    def test_setupPASSConnection(self):
+        client, proxy, envAddr = FTPProxyServerTestResources.setupEnvironment()
+        t1 = threading.Thread(target=proxy.run)
+        t1.start()
+
+        controlMessages, dataMessages = client.simulateFTPSequence(
+            [
+                bytes(f"USER {FTPTestUsername}\r\n", encoding="utf-8"),
+                bytes(f"PASS {FTPTestPassword}\r\n", encoding="utf-8"),
+            ],
+        )
+
+        proxy.close()
+        t1.join()
+
+        expectedControlMessages = [
+            b"331 Please specify the password.\r\n",
+            b"230 Login successful.\r\n"
+        ]
+
+        self._verifyExpectedControlMessages(controlMessages, expectedControlMessages)
+
+    def test_setupPASVDataConnection(self):
+        client, proxy, envAddr = FTPProxyServerTestResources.setupEnvironment()
+        t1 = threading.Thread(target=proxy.run)
+        t1.start()
+
+        controlMessages, dataMessages = client.simulateFTPSequence(
+            [
+                bytes(f"USER {FTPTestUsername}\r\n", encoding="utf-8"),
+                bytes(f"PASS {FTPTestPassword}\r\n", encoding="utf-8"),
+                bytes(f"PASV\r\n", encoding="utf-8"),
+            ],
+        )
+
+        proxy.close()
+        t1.join()
+
+
+        expectedControlMessages = [
+            b"331 Please specify the password.\r\n",
+            b"230 Login successful.\r\n",
+            b"227 Entering Passive Mode \((\d+),(\d+),(\d+),(\d+),(\d+),(\d+)\).\r\n"
+        ]
+
+
+        self._verifyExpectedControlMessages(controlMessages, expectedControlMessages)
+
+    def test_setupACTIVEDataConnection(self):
+        client, proxy, envAddr = FTPProxyServerTestResources.setupEnvironment()
+        t1 = threading.Thread(target=proxy.run)
+        t1.start()
+
+        breakpoint()
+        controlMessages, dataMessages = client.simulateFTPSequence(
+            [
+                bytes(f"USER {FTPTestUsername}\r\n", encoding="utf-8"),
+                bytes(f"PASS {FTPTestPassword}\r\n", encoding="utf-8"),
+                bytes(f"PORT 127,0,0,1,10,2\r\n", encoding="utf-8"),
+            ],
+        )
+
+        proxy.close()
+        t1.join()
+
+        expectedControlMessages = [
+            b"331 Please specify the password.\r\n",
+            b"230 Login successful.\r\n",
+            B"200 PORT command successful. Consider using PASV.\r\n"
+        ]
+
+        self._verifyExpectedControlMessages(controlMessages, expectedControlMessages)
+    
+
+
+    ## NOTE: These tests will consider the default data transfer method
+    ## i.e. creating a socket, sending data, then closing socket.
+    ## TODO: Expand tests to cover different data transfer methods (i.e. TYPE command can modify this)
+    ## TODO: The below set of tests do NOT cover all commands defined in RFC959. Need to increase coverage
+
+    def test_ACTIVE_RETR(self):
+        raise NotImplementedError()
+
+    def test_ACTIVE_STOR(self):
+        raise NotImplementedError()
+
+    def test_ACTIVE_LIST(self):
+        raise NotImplementedError()
+
+    def test_ACTIVE_DELE(self):
+        raise NotImplementedError()
+
+    def test_ACTIVE_HELP(self):
+        raise NotImplementedError()
+
+    def test_ACTIVE_SYST(self):
+        raise NotImplementedError()
+
+    def test_ACTIVE_STAT(self):
+        raise NotImplementedError()
+
+    def test_ACTIVE_SITE(self):
+        raise NotImplementedError()
+
+
+
+
+    def test_PASV_RETR(self):
+        raise NotImplementedError()
+    
+    def test_PASV_STOR(self):
+        raise NotImplementedError()
+
+    def test_PASV_LIST(self):
+        raise NotImplementedError()
+
+    def test_PASV_DELE(self):
+        raise NotImplementedError()
+
+    def test_PASV_HELP(self):
+        raise NotImplementedError()
+
+    def test_PASV_SYST(self):
+        raise NotImplementedError()
+
+    def test_PASV_STAT(self):
+        raise NotImplementedError()
