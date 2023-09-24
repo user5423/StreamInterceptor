@@ -17,12 +17,22 @@ from ftp_proxyinterceptor import FTPProxyInterceptor, FTPLoginProxyInterceptor, 
 from DataTransferSimulator import TelnetClientSimulator
 
 
+## BUG: Validte that the types of fpi.successUsername, fpi.successPassword are strings or bytes
+## and determine if this is correct. At the moment there is a mix of these in the tests
+## TODO: There is some legacy architecture influencing the design and structures of the tests,
+## so it is important to cleanup these tests and ensure that all tests and assertions are neccessary
+## and comprehensive
+
 ## NOTE: caplog is a pytest fixture for capturing logs
 
 class FTPProxyTestResources:
     @classmethod
     def createUnabstractedFTPInterceptor(cls):
         class TestFTPProxyInterceptor(FTPProxyInterceptor):
+            def __init__(self):
+                ## (server, proxyTunnel, buffer)
+                super().__init__(None, None, None)
+
             def _createStateGenerator(self) -> typing.Generator:
                 yield
                 return
@@ -37,7 +47,8 @@ class FTPProxyTestResources:
     def createUnabstractedFTPLoginInterceptor(cls):
         class TestFTPLoginProxyInterceptor(FTPLoginProxyInterceptor):
             def __init__(self) -> None:
-                super().__init__()
+                ## (server, proxyTunnel, buffer)
+                super().__init__(None, None, None)
                 self.calledExecuteSuccessHook = False
                 self.successUsername = None
                 self.successPassword = None
@@ -139,30 +150,30 @@ class Test_FTPProxyInterceptors_Helpers:
     def test_getResponse_multiline(self) -> None:
         pi = FTPProxyTestResources.createUnabstractedFTPInterceptor()
         ## TODO: Find out what the actual delimiter is for lines (within a reply)
-        assert pi._getResponseCode("100-firstline\n secondline\n 100 finalline") == 100
+        assert pi._getResponseCode(b"100-firstline\n secondline\n 100 finalline") == 100
 
     def test_getResponse_singleline(self) -> None:
         pi = FTPProxyTestResources.createUnabstractedFTPInterceptor()
-        assert pi._getResponseCode("100 firstline") == 100
+        assert pi._getResponseCode(b"100 firstline") == 100
 
     def test_getResponseCode_lowerBounds(self) -> None:
         ## NOTE: We only need to check if the bounds are correct
         ## There exist values inside that are not valid response codes (potentially)
         ## But we trust the server
         pi = FTPProxyTestResources.createUnabstractedFTPInterceptor()
-        assert pi._getResponseCode("100 firstline") == 100
-        assert pi._getResponseCode("200 firstline") == 200
-        assert pi._getResponseCode("300 firstline") == 300
-        assert pi._getResponseCode("400 firstline") == 400
-        assert pi._getResponseCode("500 firstline") == 500
+        assert pi._getResponseCode(b"100 firstline") == 100
+        assert pi._getResponseCode(b"200 firstline") == 200
+        assert pi._getResponseCode(b"300 firstline") == 300
+        assert pi._getResponseCode(b"400 firstline") == 400
+        assert pi._getResponseCode(b"500 firstline") == 500
 
     def test_getResponseCode_upperBounds(self) -> None:
         pi = FTPProxyTestResources.createUnabstractedFTPInterceptor()
-        assert pi._getResponseCode("159 firstline") == 159
-        assert pi._getResponseCode("259 firstline") == 259
-        assert pi._getResponseCode("359 firstline") == 359
-        assert pi._getResponseCode("459 firstline") == 459
-        assert pi._getResponseCode("559 firstline") == 559
+        assert pi._getResponseCode(b"159 firstline") == 159
+        assert pi._getResponseCode(b"259 firstline") == 259
+        assert pi._getResponseCode(b"359 firstline") == 359
+        assert pi._getResponseCode(b"459 firstline") == 459
+        assert pi._getResponseCode(b"559 firstline") == 559
 
     def test_getResponseCode_outOfLowerBounds(self) -> None:
         pi = FTPProxyTestResources.createUnabstractedFTPInterceptor()
@@ -359,8 +370,12 @@ class Test_FTPProxyInterceptor_Init:
     def test_init(self):
         ## We check if there is only a default initializer
         initSig = inspect.signature(FTPProxyInterceptor.__init__)
-        assert len(initSig.parameters) == 1 and bool(initSig.parameters["self"])
-
+        assert len(initSig.parameters) == 4
+        initSigParameters = list(initSig.parameters)
+        assert "self" == initSigParameters[0]
+        assert "server" == initSigParameters[1]
+        assert "proxyTunnel" == initSigParameters[2]
+        assert "buffer" == initSigParameters[3]
 
         ## We create a subclass to test (since we need to fill in the
         ## abstract methods from the parent class)
@@ -374,29 +389,19 @@ class Test_FTPProxyInterceptor_Init:
 
         ## We check if the proxy interceptor has a request
         ## and response queue
-        fpi = subclassFTPProxyInterceptor()
+        fpi = subclassFTPProxyInterceptor(None, None, None)
         assert isinstance(fpi._requestQueue, collections.deque)
         assert len(fpi._requestQueue) == 0
         assert isinstance(fpi._responseQueue, collections.deque)
         assert len(fpi._requestQueue) == 0
 
-        ## We 
-        hookSig = inspect.signature(FTPProxyInterceptor.clientToServerRequestHook)
-        assert len(hookSig.parameters) == 2
-        assert "self" in hookSig.parameters
-        assert "buffer" in hookSig.parameters
-
-        hookSig = inspect.signature(FTPProxyInterceptor.serverToClientRequestHook)
-        assert len(hookSig.parameters) == 2
-        assert "self" in hookSig.parameters
-        assert "buffer" in hookSig.parameters
-
-        ## We check if the ftp hook exists
-        msgHookSig = inspect.signature(FTPProxyInterceptor.ftpMessageHook)
+        ## We check if the entrypoint exists hook exists
+        msgHookSig = inspect.signature(FTPProxyInterceptor.__call__)
+        msgHookParameters = list(msgHookSig.parameters)
         assert len(msgHookSig.parameters) == 3
-        assert "self" in msgHookSig.parameters
-        assert "request" in msgHookSig.parameters
-        assert "response" in msgHookSig.parameters
+        assert "self" == msgHookParameters[0]
+        assert "request" == msgHookParameters[1]
+        assert "response" == msgHookParameters[2]
 
         ## We also need to check if the ftp success hook exists
         with pytest.raises(NotImplementedError) as excInfo:
@@ -410,8 +415,8 @@ class Test_FTPProxyInterceptor_Init:
 class Test_FTPLoginProxyInterceptor_Helpers:
     def test_parseUSERrequest_1xx(self, caplog):
         ## "Error"
-        request = "USER user5423\r\n"
-        response = "150 File status okay; about to open data connection.\r\n"
+        request = b"USER user5423\r\n"
+        response = b"150 File status okay; about to open data connection.\r\n"
         fpi, messages = FTPProxyTestResources._setupParseUSERtests(request, response)
 
         completeReq, username = fpi._parseUSERrequest(request, response, messages)
@@ -423,35 +428,35 @@ class Test_FTPLoginProxyInterceptor_Helpers:
     def test_parseUSERrequest_2xx(self, caplog):
         ## "Success"
         testUsername = "user5423"
-        request = f"USER {testUsername}\r\n"
-        response = "200 Command ok.\r\n"
+        request = bytes(f"USER {testUsername}\r\n", "utf-8")
+        response = b"200 Command ok.\r\n"
         fpi, messages = FTPProxyTestResources._setupParseUSERtests(request, response)
 
         completeReq, username = fpi._parseUSERrequest(request, response, messages)
         assert completeReq is True
-        assert username == testUsername
+        assert username == bytes(testUsername, "utf-8")
         assert fpi.calledExecuteSuccessHook is True
-        assert fpi.successUsername == testUsername
+        assert fpi.successUsername == bytes(testUsername, "utf-8")
         assert fpi.successPassword is None and fpi.successAccount is None
-        FTPProxyTestResources._assertSingleSuccessLog("USER", caplog, username)
+        FTPProxyTestResources._assertSingleSuccessLog("USER", caplog, testUsername)
 
     def test_parseUSERrequest_3xx(self, caplog):
         ## "Incomplete" - waiting for more (i.e. password)
         testUsername = "user5423"
-        request = f"USER {testUsername}\r\n"
-        response = "331 Please specify the password.\r\n"
+        request = bytes(f"USER {testUsername}\r\n", "utf-8")
+        response = b"331 Please specify the password.\r\n"
         fpi, messages = FTPProxyTestResources._setupParseUSERtests(request, response)
 
         completeReq, username = fpi._parseUSERrequest(request, response, messages)
         assert completeReq is False
-        assert username == testUsername
+        assert username == bytes(testUsername, "utf-8")
         assert fpi.calledExecuteSuccessHook is False
         FTPProxyTestResources._assertNoLogs(caplog)
 
     def test_parseUSERrequest_4xx(self, caplog):
         ## "Failure"
-        request = "USER user5423\r\n"
-        response = "451 Requested action aborted: local error in processing.\r\n"
+        request = b"USER user5423\r\n"
+        response = b"451 Requested action aborted: local error in processing.\r\n"
         fpi, messages = FTPProxyTestResources._setupParseUSERtests(request, response)
 
         completeReq, username = fpi._parseUSERrequest(request, response, messages)
@@ -462,8 +467,8 @@ class Test_FTPLoginProxyInterceptor_Helpers:
 
     def test_parseUSERrequest_5xx(self, caplog):
         ## "Failure"
-        request = "USER user5423\r\n"
-        response = "502 Command not implemented\r\n"
+        request = b"USER user5423\r\n"
+        response = b"502 Command not implemented\r\n"
         fpi, messages = FTPProxyTestResources._setupParseUSERtests(request, response)
 
         completeReq, username = fpi._parseUSERrequest(request, response, messages)
@@ -476,8 +481,8 @@ class Test_FTPLoginProxyInterceptor_Helpers:
 
     def test_parsePASSrequest_1xx(self, caplog):
         ## "Error"
-        request = "PASS password\r\n"
-        response = "150 File status okay; about to open data connection.\r\n"
+        request = b"PASS password\r\n"
+        response = b"150 File status okay; about to open data connection.\r\n"
         fpi, messages, username = FTPProxyTestResources._setupParsePASStests(request, response)
 
         completeReq, password = fpi._parsePASSrequest(request, response, messages, username)
@@ -489,35 +494,35 @@ class Test_FTPLoginProxyInterceptor_Helpers:
     def test_parsePASSrequest_2xx(self, caplog):
         ## "Success"
         testPassword = "password"
-        request = f"PASS {testPassword}\r\n"
-        response = "230 Login successful.\r\n"
+        request = bytes(f"PASS {testPassword}\r\n", "utf-8")
+        response = b"230 Login successful.\r\n"
         fpi, messages, username = FTPProxyTestResources._setupParsePASStests(request, response)
 
         completeReq, password = fpi._parsePASSrequest(request, response, messages, username)
         assert completeReq is True
-        assert password == testPassword
+        assert password == bytes(testPassword, "utf-8")
         assert fpi.calledExecuteSuccessHook is True
-        assert fpi.successUsername == username and fpi.successPassword == testPassword
+        assert fpi.successUsername == username and fpi.successPassword == bytes(testPassword, "utf-8")
         assert fpi.successAccount is None
         FTPProxyTestResources._assertSingleSuccessLog("PASS", caplog, username, testPassword)
 
     def test_parsePASSrequest_3xx(self, caplog):
         ## "Incomplete"
         testPassword = "password"
-        request = f"PASS {testPassword}\r\n"
-        response = "331 Please specify the account.\r\n"
+        request = bytes(f"PASS {testPassword}\r\n", "utf-8")
+        response = b"331 Please specify the account.\r\n"
         fpi, messages, username = FTPProxyTestResources._setupParsePASStests(request, response)
 
         completeReq, password = fpi._parsePASSrequest(request, response, messages, username)
         assert completeReq is False
-        assert password == testPassword
+        assert password == bytes(testPassword, "utf-8")
         assert fpi.calledExecuteSuccessHook is False
         FTPProxyTestResources._assertNoLogs(caplog)
 
     def test_parsePASSrequest_4xx(self, caplog):
         ## "Failure"
-        request = "PASS password\r\n"
-        response = "451 Requested action aborted: local error in processing.\r\n"
+        request = b"PASS password\r\n"
+        response = b"451 Requested action aborted: local error in processing.\r\n"
         fpi, messages, username = FTPProxyTestResources._setupParsePASStests(request, response)
 
         completeReq, password = fpi._parsePASSrequest(request, response, messages, username)
@@ -528,8 +533,8 @@ class Test_FTPLoginProxyInterceptor_Helpers:
 
     def test_parsePASSrequest_5xx(self, caplog):
         ## "Failure"
-        request = "PASS password\r\n"
-        response = "502 Command not implemented\r\n"
+        request = b"PASS password\r\n"
+        response = b"502 Command not implemented\r\n"
         fpi, messages, username = FTPProxyTestResources._setupParsePASStests(request, response)
 
         completeReq, password = fpi._parsePASSrequest(request, response, messages, username)
@@ -540,8 +545,8 @@ class Test_FTPLoginProxyInterceptor_Helpers:
 
     def test_parseACCTrequest_1xx(self, caplog):
         ## "Error"
-        request = "ACCT account\r\n"
-        response = "150 File status okay; about to open data connection.\r\n"
+        request = b"ACCT account\r\n"
+        response = b"150 File status okay; about to open data connection.\r\n"
         fpi, messages, username, password = FTPProxyTestResources._setupParseACCTtests(request, response)
 
         completeReq, account = fpi._parseACCTrequest(request, response, messages, username, password)
@@ -553,21 +558,21 @@ class Test_FTPLoginProxyInterceptor_Helpers:
     def test_parseACCTrequest_2xx(self, caplog):
         ## "Success"
         testAccount = "account"
-        request = f"ACCT {testAccount}\r\n"
-        response = "230 Login successful.\r\n"
+        request = bytes(f"ACCT {testAccount}\r\n", "utf-8")
+        response = b"230 Login successful.\r\n"
         fpi, messages, username, password = FTPProxyTestResources._setupParseACCTtests(request, response)
 
         completeReq, account = fpi._parseACCTrequest(request, response, messages, username, password)
         assert completeReq is True
-        assert account == testAccount
+        assert account == bytes(testAccount, "utf-8")
         assert fpi.calledExecuteSuccessHook is True
-        assert fpi.successUsername == username and fpi.successPassword == password and fpi.successAccount == testAccount
+        assert fpi.successUsername == username and fpi.successPassword == password and fpi.successAccount == bytes(testAccount, "utf-8")
         FTPProxyTestResources._assertSingleSuccessLog("ACCT", caplog, username, password, testAccount)
 
     def test_parseACCTrequest_3xx(self, caplog):
         ## "Error" -- Cannot have a incomplete req here (at end of login sequence!!)
-        request = "ACCT account"
-        response = "331 Please specify the account.\r\n" ## ERROR!!!
+        request = b"ACCT account"
+        response = b"331 Please specify the account.\r\n" ## ERROR!!!
         fpi, messages, username, password = FTPProxyTestResources._setupParseACCTtests(request, response)
 
         completeReq, account = fpi._parseACCTrequest(request, response, messages, username, password)
@@ -578,8 +583,8 @@ class Test_FTPLoginProxyInterceptor_Helpers:
 
     def test_parseACCTrequest_4xx(self, caplog):
         ## "Failure"
-        request = "ACCT account\r\n"
-        response = "451 Requested action aborted: local error in processing.\r\n"
+        request = b"ACCT account\r\n"
+        response = b"451 Requested action aborted: local error in processing.\r\n"
         fpi, messages, username, password = FTPProxyTestResources._setupParseACCTtests(request, response)
 
         completeReq, account = fpi._parseACCTrequest(request, response, messages, username, password)
@@ -590,8 +595,8 @@ class Test_FTPLoginProxyInterceptor_Helpers:
 
     def test_parseACCTrequest_5xx(self, caplog):
         ## "Failure"
-        request = "ACCT account\r\n"
-        response = "502 Command not implemented\r\n"
+        request = b"ACCT account\r\n"
+        response = b"502 Command not implemented\r\n"
         fpi, messages, username, password = FTPProxyTestResources._setupParseACCTtests(request, response)
 
         completeReq, account = fpi._parseACCTrequest(request, response, messages, username, password)
@@ -612,15 +617,15 @@ class Test_FTPLoginProxyInterceptor:
         isClientSender = True
         for message in sequence:
             if isClientSender:
-                fpi.ftpMessageHook(request=message)
+                fpi.__call__(request=message)
             else:
-                fpi.ftpMessageHook(response=message)
+                fpi.__call__(response=message)
             isClientSender = not isClientSender
 
     def test_ftpMessageHook_USER_1xx(self, caplog):
         sequence = [
-            "USER user5423\r\n",
-            "150 File status okay; about to open data connection.\r\n"
+            b"USER user5423\r\n",
+            b"150 File status okay; about to open data connection.\r\n"
         ]
 
         fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
@@ -631,8 +636,8 @@ class Test_FTPLoginProxyInterceptor:
     def test_ftpMessageHook_USER_2xx(self, caplog):
         username = "user5423"
         sequence = [
-            f"USER {username}\r\n",
-            "230 User logged in, proceed.\r\n"
+            bytes(f"USER {username}\r\n", "utf-8"),
+            b"230 User logged in, proceed.\r\n"
         ]
 
         fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
@@ -642,8 +647,8 @@ class Test_FTPLoginProxyInterceptor:
 
     def test_ftpMessageHook_USER_3xx(self, caplog):
         sequence = [
-            "USER user5423\r\n",
-            "331 Please specify the password.\r\n"
+            b"USER user5423\r\n",
+            b"331 Please specify the password.\r\n"
         ]     
 
         fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
@@ -653,8 +658,8 @@ class Test_FTPLoginProxyInterceptor:
 
     def test_ftpMessageHook_USER_4xx(self, caplog):
         sequence = [
-            "USER user5423\r\n",
-            "451 Requested action aborted: local error in processing.\r\n"
+            b"USER user5423\r\n",
+            b"451 Requested action aborted: local error in processing.\r\n"
         ]
 
         fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
@@ -664,8 +669,8 @@ class Test_FTPLoginProxyInterceptor:
 
     def test_ftpMessageHook_USER_5xx(self, caplog):
         sequence = [
-            "USER user5423\r\n",
-            "502 Command not implemented\r\n"
+            b"USER user5423\r\n",
+            b"502 Command not implemented\r\n"
         ]
 
         fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
@@ -676,10 +681,10 @@ class Test_FTPLoginProxyInterceptor:
     def test_ftpMessageHook_PASS_1xx(self, caplog):
         username = "user5423"
         sequence = [
-            f"USER {username}\r\n",
-            "331 Please specify the password.\r\n",
-            "PASS password\r\n",
-            "150 File status okay; about to open data connection.\r\n"
+            bytes(f"USER {username}\r\n", "utf-8"),
+            b"331 Please specify the password.\r\n",
+            b"PASS password\r\n",
+            b"150 File status okay; about to open data connection.\r\n"
         ]
 
         fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
@@ -691,10 +696,10 @@ class Test_FTPLoginProxyInterceptor:
         username = "user5423"
         password = "password"
         sequence = [
-            f"USER {username}\r\n",
-            "331 Please specify the password.\r\n",
-            f"PASS {password}\r\n",
-            "230 Login successful.\r\n"
+            bytes(f"USER {username}\r\n", "utf-8"),
+            b"331 Please specify the password.\r\n",
+            bytes(f"PASS {password}\r\n", "utf-8"),
+            b"230 Login successful.\r\n"
         ]
 
         fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
@@ -705,10 +710,10 @@ class Test_FTPLoginProxyInterceptor:
     def test_ftpMessageHook_PASS_3xx(self, caplog):
         username = "user5423"
         sequence = [
-            f"USER {username}\r\n",
-            "331 Please specify the password.\r\n",
-            "PASS password\r\n",
-            "331 Please specify the account.\r\n"
+            bytes(f"USER {username}\r\n", "utf-8"),
+            b"331 Please specify the password.\r\n",
+            b"PASS password\r\n",
+            b"331 Please specify the account.\r\n"
         ]
 
         fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
@@ -719,10 +724,10 @@ class Test_FTPLoginProxyInterceptor:
     def test_ftpMessageHook_PASS_4xx(self, caplog):
         username = "user5423"
         sequence = [
-            f"USER {username}\r\n",
-            "331 Please specify the password.\r\n",
-            "PASS password\r\n",
-            "451 Requested action aborted: local error in processing.\r\n"
+            bytes(f"USER {username}\r\n", "utf-8"),
+            b"331 Please specify the password.\r\n",
+            b"PASS password\r\n",
+            b"451 Requested action aborted: local error in processing.\r\n"
         ]
 
         fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
@@ -733,10 +738,10 @@ class Test_FTPLoginProxyInterceptor:
     def test_ftpMessageHook_PASS_5xx(self, caplog):
         username = "user5423"
         sequence = [
-            f"USER {username}\r\n",
-            "331 Please specify the password.\r\n",
-            "PASS password\r\n",
-            "502 Command not implemented\r\n"
+            bytes(f"USER {username}\r\n", "utf-8"),
+            b"331 Please specify the password.\r\n",
+            b"PASS password\r\n",
+            b"502 Command not implemented\r\n"
         ]
 
         fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
@@ -748,12 +753,12 @@ class Test_FTPLoginProxyInterceptor:
         username = "user5423"
         password = "password"
         sequence = [
-            f"USER {username}\r\n",
-            "331 Please specify the password.\r\n",
-            f"PASS {password}\r\n",
-            "331 Please specify the account.\r\n",
-            "ACCT account\r\n",
-            "150 File status okay; about to open data connection.\r\n"
+            bytes(f"USER {username}\r\n", "utf-8"),
+            b"331 Please specify the password.\r\n",
+            bytes(f"PASS {password}\r\n", "utf-8"),
+            b"331 Please specify the account.\r\n",
+            b"ACCT account\r\n",
+            b"150 File status okay; about to open data connection.\r\n"
         ]
 
         fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
@@ -766,12 +771,12 @@ class Test_FTPLoginProxyInterceptor:
         password = "password"
         account = "account"
         sequence = [
-            f"USER {username}\r\n",
-            "331 Please specify the password.\r\n",
-            f"PASS {password}\r\n",
-            "331 Please specify the account.\r\n",
-            f"ACCT {account}\r\n",
-            "230 Login successful.\r\n"
+            bytes(f"USER {username}\r\n", "utf-8"),
+            b"331 Please specify the password.\r\n",
+            bytes(f"PASS {password}\r\n", "utf-8"),
+            b"331 Please specify the account.\r\n",
+            bytes(f"ACCT {account}\r\n", "utf-8"),
+            b"230 Login successful.\r\n"
         ]
 
         fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
@@ -783,12 +788,12 @@ class Test_FTPLoginProxyInterceptor:
         username = "user5423"
         password = "password"
         sequence = [
-            f"USER {username}\r\n",
-            "331 Please specify the password.\r\n",
-            f"PASS {password}\r\n",
-            "331 Please specify the account.\r\n",
-            "ACCT account\r\n",
-            "331 Please specify the account.\r\n" ## ERROR!!!
+            bytes(f"USER {username}\r\n", "utf-8"),
+            b"331 Please specify the password.\r\n",
+            bytes(f"PASS {password}\r\n", "utf-8"),
+            b"331 Please specify the account.\r\n",
+            b"ACCT account\r\n",
+            b"331 Please specify the account.\r\n" ## ERROR!!!
         ]
 
         fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
@@ -800,12 +805,12 @@ class Test_FTPLoginProxyInterceptor:
         username = "user5423"
         password = "password"
         sequence = [
-            f"USER {username}\r\n",
-            "331 Please specify the password.\r\n",
-            f"PASS {password}\r\n",
-            "331 Please specify the account.\r\n",
-            "ACCT account\r\n",
-            "451 Requested action aborted: local error in processing.\r\n"
+            bytes(f"USER {username}\r\n", "utf-8"),
+            b"331 Please specify the password.\r\n",
+            bytes(f"PASS {password}\r\n", "utf-8"),
+            b"331 Please specify the account.\r\n",
+            b"ACCT account\r\n",
+            b"451 Requested action aborted: local error in processing.\r\n"
         ]
 
         fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
@@ -817,12 +822,12 @@ class Test_FTPLoginProxyInterceptor:
         username = "user5423"
         password = "password"
         sequence = [
-            f"USER {username}\r\n",
-            "331 Please specify the password.\r\n",
-            f"PASS {password}\r\n",
-            "331 Please specify the account.\r\n",
-            "ACCT account\r\n",
-            "502 Command not implemented\r\n"
+            bytes(f"USER {username}\r\n", "utf-8"),
+            b"331 Please specify the password.\r\n",
+            bytes(f"PASS {password}\r\n", "utf-8"),
+            b"331 Please specify the account.\r\n",
+            b"ACCT account\r\n",
+            b"502 Command not implemented\r\n"
         ]
 
         fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
@@ -840,12 +845,12 @@ class Test_FTPLoginProxyInterceptor:
         password = "password"
         account = "account"
         sequence = [
-            f"USER {username}\r\n",
-            "331 Please specify the password.\r\n",
-            f"PASS {password}\r\n",
-            "230 Login successful.\r\n",
-            f"USER {username}\r\n",
-            "230 Already logged in.\r\n"
+            bytes(f"USER {username}\r\n", "utf-8"),
+            b"331 Please specify the password.\r\n",
+            bytes(f"PASS {password}\r\n", "utf-8"),
+            b"230 Login successful.\r\n",
+            bytes(f"USER {username}\r\n", "utf-8"),
+            b"230 Already logged in.\r\n"
         ]
         
         fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
@@ -858,14 +863,14 @@ class Test_FTPLoginProxyInterceptor:
         password = "password"
         secondPassword = "RANDOM_PASSWORD"
         sequence = [
-            f"USER {username}\r\n",
-            "331 Please specify the password.\r\n",
-            f"PASS {password}\r\n",
-            "230 Login successful.\r\n",
-            f"USER {username}\r\n",
-            "331 Any password will do.\r\n",
-            f"PASS {secondPassword}\r\n",
-            "230 Already logged in.\r\n"
+            bytes(f"USER {username}\r\n", "utf-8"),
+            b"331 Please specify the password.\r\n",
+            bytes(f"PASS {password}\r\n", "utf-8"),
+            b"230 Login successful.\r\n",
+            bytes(f"USER {username}\r\n", "utf-8"),
+            b"331 Any password will do.\r\n",
+            bytes(f"PASS {secondPassword}\r\n", "utf-8"),
+            b"230 Already logged in.\r\n"
         ]
 
         fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
@@ -879,16 +884,16 @@ class Test_FTPLoginProxyInterceptor:
         secondPassword = "RANDOM_PASSWORD"
         secondAccount = "RANDOM_ACCOUNT"
         sequence = [
-            f"USER {username}\r\n",
-            "331 Please specify the password.\r\n",
-            f"PASS {password}\r\n",
-            "230 Login successful.\r\n",
-            f"USER {username}\r\n",
-            "331 Any password will do.\r\n",
-            f"PASS {secondPassword}\r\n",
-            "331 Any account will do.\r\n",
-            f"ACCT {secondAccount}\r\n",
-            "230 Already logged in.\r\n"
+            bytes(f"USER {username}\r\n", "utf-8"),
+            b"331 Please specify the password.\r\n",
+            bytes(f"PASS {password}\r\n", "utf-8"),
+            b"230 Login successful.\r\n",
+            bytes(f"USER {username}\r\n", "utf-8"),
+            b"331 Any password will do.\r\n",
+            bytes(f"PASS {secondPassword}\r\n", "utf-8"),
+            b"331 Any account will do.\r\n",
+            bytes(f"ACCT {secondAccount}\r\n", "utf-8"),
+            b"230 Already logged in.\r\n"
         ]
 
         fpi = FTPProxyTestResources.createUnabstractedFTPLoginInterceptor()
