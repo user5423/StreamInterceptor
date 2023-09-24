@@ -157,3 +157,114 @@ class FTPTestClient:
             dataMessages.append(self._extractDataConnSocketData(clientDataSock))
 
         return controlMessages, dataMessages
+
+
+class FTPProxyServerTestResources:
+    @classmethod
+    def setupEnvironment(cls) -> Tuple[FTPTestClient, FTPProxyServer]:
+        ## We'll be using vsftpd
+        ## We may want to create a conf for it
+
+        ## The architecture is simple:
+
+        ## ----------      ---------      ----------
+        ## | Client | ---> | Proxy | ---> | Server |
+        ## ----------      ---------      ----------
+
+        ## We need to run the vsftpd environment
+        vsftpdStatus = subprocess.run("systemctl is-active --quiet vsftpd".split(" "), shell=False)
+        if vsftpdStatus.returncode != 0: ## inactive
+            subprocess.run("systemctl start vsftpd".split(" "), shell=False, check=True)
+
+        ## We need to setup the proxy server
+        HOST, PORT = "127.0.0.1", 8080
+        PROXY_HOST, PROXY_PORT = "127.0.0.1", 21 ## This is dependent on the vsftpd conf
+        # controlStreamInterceptorRegistration = [SharedStreamInterceptorRegister(FTPLoginProxyInterceptor, True, True)]
+        controlStreamInterceptorRegistration = []
+        proxy = FTPProxyServer(HOST, PORT, PROXY_HOST, PROXY_PORT, controlStreamInterceptorRegistration, addressReuse=True)
+
+        ## The client will be issuing requests
+        client = FTPTestClient(HOST, PORT)
+        envAddr = {"HOST": HOST, "PORT": PORT, "PROXY_HOST": PROXY_HOST, "PROXY_PORT": PROXY_PORT, "interceptor": None}
+        return client, proxy, envAddr
+
+
+    @classmethod
+    def assertConstantServerAttributes(cls, proxy: FTPProxyServer,
+        HOST, PORT, PROXY_HOST, PROXY_PORT, interceptor) -> None:
+        assert proxy.HOST == HOST
+        assert proxy.PORT == PORT
+        assert proxy.PROXY_HOST == PROXY_HOST
+        assert proxy.PROXY_PORT == PROXY_PORT
+
+        assert isinstance(proxy.selector, selectors.DefaultSelector)
+
+        assert isinstance(proxy.controlServerSocket, socket.socket)
+        assert proxy.controlSocketAddress == (proxy.HOST, proxy.PORT)
+        assert proxy.controlServerSocket in proxy.selector.get_map()
+        assert proxy.controlServerSocket.getsockname() == (proxy.HOST, proxy.PORT)
+
+        assert isinstance(proxy.controlProxyConnections, ProxyConnections)
+        assert proxy.controlProxyConnections.PROXY_HOST == proxy.PROXY_HOST
+        assert proxy.controlProxyConnections.PROXY_PORT == proxy.PROXY_PORT
+        assert isinstance(proxy.controlProxyConnections.selector, selectors.BaseSelector)
+
+        assert isinstance(proxy.dataProxyConnections, ProxyConnections)
+        assert proxy.dataProxyConnections.PROXY_HOST == proxy.PROXY_HOST
+        assert proxy.dataProxyConnections.PROXY_PORT == proxy.PROXY_PORT
+        assert isinstance(proxy.dataProxyConnections.selector, selectors.BaseSelector)
+
+        ## These should share the same selector, as sockets are treated homogenously by the event loop
+        assert proxy.dataProxyConnections.selector == proxy.controlProxyConnections.selector == proxy.selector
+
+
+    @classmethod
+    def _isControlConnSetup(cls, ): ...
+
+    @classmethod
+    def _isDataConnSetup(cls, ): ...
+
+
+
+## Pytest fixtures for FTPProxyServer tests
+
+def setupConnSocketPair():
+    clientSock = socket.socket()
+    serverSock = socket.socket()
+    serverSock.bind(("", 0))
+    serverSock.listen()
+    clientSock.connect(serverSock.getsockname())
+    ephemeralServerSock, _ = serverSock.accept()
+    yield clientSock, ephemeralServerSock
+
+    clientSock.close()
+    serverSock.close()
+    ephemeralServerSock.close()
+
+@pytest.fixture()
+def setupDataSocketPair():
+    x = setupConnSocketPair()
+    yield next(x)
+    try:
+        next(x)
+    except StopIteration:
+        pass
+
+
+@pytest.fixture()
+def setupContSocketPair():
+    x = setupConnSocketPair()
+    yield next(x)
+    try:
+        next(x)
+    except StopIteration:
+        pass
+
+
+@pytest.fixture()
+def setupConnSetupTests(setupContSocketPair):
+    _, proxy, envAddr = FTPProxyServerTestResources.setupEnvironment()
+    clientSock, ephemeralServerSock = setupContSocketPair
+    # print("setupConnSetup")
+    yield proxy, envAddr, clientSock, ephemeralServerSock
+    proxy.controlServerSocket.close()
